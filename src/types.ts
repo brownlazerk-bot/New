@@ -26,6 +26,16 @@ export type ProductSection =
 
 export type ItemStatus = 'Available' | 'Out of Stock';
 
+export interface AccompanyingDrink {
+  id?: string;
+  menuItemId?: string; // Optional linked drink MenuItem ID from stock / bar menu
+  drinkName: string;   // e.g. "Cold Coca-Cola 300ml", "Heineken Beer", "House Wine Glass"
+  quantity: number;    // e.g. 1
+  unit?: string;       // e.g. 'Bottle', 'Glass', 'Can', 'Cup', 'Shot'
+  extraPrice?: number; // Optional additional price (0 = included/free accompaniment)
+  notes?: string;      // e.g., "Served chilled with ice and lemon", "Recommended pairing"
+}
+
 export interface RecipeIngredient {
   id?: string;
   recipeId?: string;
@@ -47,6 +57,7 @@ export interface RecipeVersionRecord {
   updatedBy: string;
   changeSummary?: string;
   ingredients: RecipeIngredient[];
+  accompanyingDrinks?: AccompanyingDrink[];
   instructions?: string;
   yieldServings?: number;
 }
@@ -61,6 +72,7 @@ export interface Recipe {
   instructions?: string;
   yieldServings: number; // default 1
   ingredients: RecipeIngredient[];
+  accompanyingDrinks?: AccompanyingDrink[];
   status: 'Active' | 'Inactive';
   version: number;
   history?: RecipeVersionRecord[];
@@ -213,6 +225,7 @@ export interface MenuItem {
   hasRecipe?: boolean;
   recipeId?: string; // Foreign key linking to standalone Recipe
   recipe?: RecipeIngredient[];
+  accompanyingDrinks?: AccompanyingDrink[];
 }
 
 export type TableStatus = 'Available' | 'Occupied' | 'Reserved' | 'Cleaning' | 'Out of Service';

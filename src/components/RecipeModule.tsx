@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   Recipe, RecipeIngredient, KitchenIngredient, MenuItem, 
-  RecipeVersionRecord, AppUser 
+  RecipeVersionRecord, AppUser, AccompanyingDrink 
 } from '../types';
 import { formatCurrency } from '../lib/currency';
 import { 
@@ -11,7 +11,8 @@ import { printReportHTML } from '../lib/exporter';
 import { 
   Utensils, Plus, Edit2, Trash2, Copy, Printer, Search, Filter, 
   DollarSign, Calculator, Layers, CheckCircle2, XCircle, History, 
-  BookOpen, Sparkles, AlertCircle, ArrowUpRight, Clock, User, ChevronRight, FileText 
+  BookOpen, Sparkles, AlertCircle, ArrowUpRight, Clock, User, ChevronRight, FileText,
+  Wine, GlassWater
 } from 'lucide-react';
 
 interface RecipeModuleProps {
@@ -47,6 +48,7 @@ export const RecipeModule: React.FC<RecipeModuleProps> = ({
   const [formInstructions, setFormInstructions] = useState('');
   const [formYieldServings, setFormYieldServings] = useState<number>(1);
   const [formIngredientsDraft, setFormIngredientsDraft] = useState<RecipeIngredient[]>([]);
+  const [formAccompanyingDrinksDraft, setFormAccompanyingDrinksDraft] = useState<AccompanyingDrink[]>([]);
   const [formStatus, setFormStatus] = useState<'Active' | 'Inactive'>('Active');
   const [changeSummary, setChangeSummary] = useState('');
 
@@ -72,6 +74,7 @@ export const RecipeModule: React.FC<RecipeModuleProps> = ({
     setFormInstructions('');
     setFormYieldServings(1);
     setFormIngredientsDraft([]);
+    setFormAccompanyingDrinksDraft([]);
     setFormStatus('Active');
     setChangeSummary('Initial recipe creation');
     setShowEditorModal(true);
@@ -86,6 +89,7 @@ export const RecipeModule: React.FC<RecipeModuleProps> = ({
     setFormInstructions(rec.instructions || '');
     setFormYieldServings(rec.yieldServings || 1);
     setFormIngredientsDraft(rec.ingredients ? [...rec.ingredients] : []);
+    setFormAccompanyingDrinksDraft(rec.accompanyingDrinks ? [...rec.accompanyingDrinks] : []);
     setFormStatus(rec.status);
     setChangeSummary('');
     setShowEditorModal(true);
@@ -137,6 +141,44 @@ export const RecipeModule: React.FC<RecipeModuleProps> = ({
     setFormIngredientsDraft(updated);
   };
 
+  // Add Accompanying Drink Row to Draft
+  const handleAddDrinkRow = () => {
+    const drinkCategories = ['Beers', 'Soft Drinks', 'Wines', 'Whisky', 'Cocktails', 'Juices', 'Water', 'Coffee', 'Tea'];
+    const beverageItems = menuItems.filter(m => drinkCategories.includes(m.category));
+    const defaultDrink = beverageItems[0] || menuItems[0];
+
+    const newDrinkRow: AccompanyingDrink = {
+      id: `drk-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      menuItemId: defaultDrink ? defaultDrink.id : '',
+      drinkName: defaultDrink ? defaultDrink.name : 'Cold Coca-Cola 300ml',
+      quantity: 1,
+      unit: defaultDrink?.unit || 'Bottle',
+      extraPrice: 0,
+      notes: 'Served chilled as recommended pairing'
+    };
+    setFormAccompanyingDrinksDraft([...formAccompanyingDrinksDraft, newDrinkRow]);
+  };
+
+  // Update Accompanying Drink Row
+  const handleUpdateDrinkRow = (index: number, updates: Partial<AccompanyingDrink>) => {
+    const updated = [...formAccompanyingDrinksDraft];
+    if (updates.menuItemId) {
+      const selectedItem = menuItems.find(m => m.id === updates.menuItemId);
+      if (selectedItem) {
+        updates.drinkName = selectedItem.name;
+        updates.unit = selectedItem.unit || 'Bottle';
+      }
+    }
+    updated[index] = { ...updated[index], ...updates };
+    setFormAccompanyingDrinksDraft(updated);
+  };
+
+  // Remove Accompanying Drink Row
+  const handleRemoveDrinkRow = (index: number) => {
+    const updated = formAccompanyingDrinksDraft.filter((_, i) => i !== index);
+    setFormAccompanyingDrinksDraft(updated);
+  };
+
   // Calculate total food cost for a recipe draft or recipe object
   const calculateTotalFoodCost = (recipeIngs: RecipeIngredient[]) => {
     return recipeIngs.reduce((sum, item) => {
@@ -168,6 +210,7 @@ export const RecipeModule: React.FC<RecipeModuleProps> = ({
         updatedBy: editingRecipe.updatedBy || loggedInUser?.fullName || 'System Chef',
         changeSummary: changeSummary || 'Recipe details updated',
         ingredients: [...editingRecipe.ingredients],
+        accompanyingDrinks: editingRecipe.accompanyingDrinks ? [...editingRecipe.accompanyingDrinks] : [],
         instructions: editingRecipe.instructions,
         yieldServings: editingRecipe.yieldServings
       };
@@ -181,6 +224,7 @@ export const RecipeModule: React.FC<RecipeModuleProps> = ({
         instructions: formInstructions,
         yieldServings: formYieldServings,
         ingredients: formIngredientsDraft,
+        accompanyingDrinks: formAccompanyingDrinksDraft,
         status: formStatus,
         version: nextVersion,
         history: [historySnapshot, ...(editingRecipe.history || [])],
@@ -199,7 +243,8 @@ export const RecipeModule: React.FC<RecipeModuleProps> = ({
               ...m,
               hasRecipe: true,
               recipeId: updatedRecipe.id,
-              recipe: formIngredientsDraft
+              recipe: formIngredientsDraft,
+              accompanyingDrinks: formAccompanyingDrinksDraft
             };
           }
           return m;
@@ -217,6 +262,7 @@ export const RecipeModule: React.FC<RecipeModuleProps> = ({
         instructions: formInstructions,
         yieldServings: formYieldServings,
         ingredients: formIngredientsDraft,
+        accompanyingDrinks: formAccompanyingDrinksDraft,
         status: formStatus,
         version: 1,
         history: [],
@@ -235,7 +281,8 @@ export const RecipeModule: React.FC<RecipeModuleProps> = ({
               ...m,
               hasRecipe: true,
               recipeId: newRecipe.id,
-              recipe: formIngredientsDraft
+              recipe: formIngredientsDraft,
+              accompanyingDrinks: formAccompanyingDrinksDraft
             };
           }
           return m;
@@ -321,9 +368,20 @@ export const RecipeModule: React.FC<RecipeModuleProps> = ({
         </table>
 
         ${recipe.instructions ? `
-          <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 12px; border-radius: 8px;">
+          <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 12px; border-radius: 8px; margin-bottom: 16px;">
             <h4 style="margin: 0 0 6px 0; font-size: 13px; color: #0f172a;">Preparation Instructions:</h4>
             <p style="margin: 0; font-size: 12px; white-space: pre-line; color: #334155;">${recipe.instructions}</p>
+          </div>
+        ` : ''}
+
+        ${recipe.accompanyingDrinks && recipe.accompanyingDrinks.length > 0 ? `
+          <div style="background-color: #f0f9ff; border: 1px solid #bae6fd; padding: 12px; border-radius: 8px;">
+            <h4 style="margin: 0 0 6px 0; font-size: 13px; color: #0369a1;">🍹 Recommended Accompanying Drinks / Beverage Pairings:</h4>
+            <ul style="margin: 0; padding-left: 20px; font-size: 12px; color: #0c4a6e;">
+              ${recipe.accompanyingDrinks.map(ad => `
+                <li style="margin-bottom: 4px;"><strong>${ad.drinkName}</strong> — ${ad.quantity} ${ad.unit || 'Bottle'} ${ad.extraPrice ? `(+${formatCurrency(ad.extraPrice)})` : '(Included)'} ${ad.notes ? `<em>— ${ad.notes}</em>` : ''}</li>
+              `).join('')}
+            </ul>
           </div>
         ` : ''}
       </div>
@@ -507,6 +565,23 @@ export const RecipeModule: React.FC<RecipeModuleProps> = ({
                       )}
                     </div>
                   </div>
+
+                  {/* Accompanying Drinks Badge on Card */}
+                  {recipe.accompanyingDrinks && recipe.accompanyingDrinks.length > 0 && (
+                    <div className="text-xs text-slate-400 pt-2 border-t border-slate-800/60">
+                      <span className="font-bold text-sky-400 flex items-center gap-1 text-[11px]">
+                        <Wine className="w-3.5 h-3.5 text-sky-400" />
+                        <span>Accompanying Drink Pairings ({recipe.accompanyingDrinks.length}):</span>
+                      </span>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {recipe.accompanyingDrinks.map((ad, i) => (
+                          <span key={i} className="text-[10px] px-2 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-800/60 font-semibold flex items-center gap-1">
+                            🍹 {ad.drinkName} ({ad.quantity} {ad.unit || 'Bottle'}{ad.extraPrice ? ` +${formatCurrency(ad.extraPrice)}` : ''})
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Actions Footer */}
@@ -735,6 +810,119 @@ export const RecipeModule: React.FC<RecipeModuleProps> = ({
                   <span className="font-mono text-base font-black text-amber-400">
                     {formatCurrency(calculateTotalFoodCost(formIngredientsDraft))}
                   </span>
+                </div>
+              </div>
+
+              {/* Accompanying Drink Pairings Builder */}
+              <div className="space-y-2 pt-2 border-t border-slate-800">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-black text-xs text-sky-400 uppercase tracking-wider flex items-center space-x-1">
+                    <Wine className="w-4 h-4 text-sky-400" />
+                    <span>Accompanying Drink Pairings (Beverage Recommendations)</span>
+                  </h4>
+
+                  <button
+                    type="button"
+                    onClick={handleAddDrinkRow}
+                    className="px-3 py-1.5 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 text-xs font-bold cursor-pointer flex items-center space-x-1"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Drink Pairing</span>
+                  </button>
+                </div>
+
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {formAccompanyingDrinksDraft.length === 0 ? (
+                    <p className="text-xs text-slate-500 text-center py-4 border border-dashed border-slate-800 rounded-2xl">
+                      No accompanying drinks attached yet. Click "+ Add Drink Pairing" above to recommend or bundle beverages with this dish (e.g. Wine, Soft Drink, Juice).
+                    </p>
+                  ) : (
+                    formAccompanyingDrinksDraft.map((drinkRow, dIdx) => (
+                      <div key={drinkRow.id || dIdx} className="p-3 rounded-2xl bg-slate-950 border border-sky-900/40 space-y-2 text-xs">
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                          <div className="sm:col-span-4">
+                            <label className="text-[10px] text-slate-400 font-bold block">Select Drink / Beverage Item</label>
+                            <select
+                              value={drinkRow.menuItemId || ''}
+                              onChange={(e) => {
+                                const selectedMenu = menuItems.find(m => m.id === e.target.value);
+                                handleUpdateDrinkRow(dIdx, {
+                                  menuItemId: e.target.value,
+                                  drinkName: selectedMenu ? selectedMenu.name : drinkRow.drinkName
+                                });
+                              }}
+                              className="w-full px-2 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white font-bold outline-none"
+                            >
+                              <option value="">-- Custom Drink Name --</option>
+                              {menuItems.map(m => (
+                                <option key={m.id} value={m.id}>
+                                  [{m.category}] {m.name} ({formatCurrency(m.price)})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="sm:col-span-3">
+                            <label className="text-[10px] text-slate-400 font-bold block">Drink Name</label>
+                            <input
+                              type="text"
+                              value={drinkRow.drinkName}
+                              onChange={(e) => handleUpdateDrinkRow(dIdx, { drinkName: e.target.value })}
+                              placeholder="e.g. Cold Coca-Cola 300ml"
+                              className="w-full px-2 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-sky-300 font-bold outline-none"
+                            />
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className="text-[10px] text-slate-400 font-bold block">Qty & Unit</label>
+                            <div className="flex space-x-1">
+                              <input
+                                type="number"
+                                min="1"
+                                value={drinkRow.quantity}
+                                onChange={(e) => handleUpdateDrinkRow(dIdx, { quantity: parseInt(e.target.value) || 1 })}
+                                className="w-12 px-1 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-amber-400 font-bold text-center outline-none"
+                              />
+                              <input
+                                type="text"
+                                value={drinkRow.unit || 'Bottle'}
+                                onChange={(e) => handleUpdateDrinkRow(dIdx, { unit: e.target.value })}
+                                className="w-full px-1.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white text-[11px] outline-none"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="sm:col-span-3">
+                            <label className="text-[10px] text-slate-400 font-bold block">Extra Price (0 = Free/Included)</label>
+                            <input
+                              type="number"
+                              value={drinkRow.extraPrice || 0}
+                              onChange={(e) => handleUpdateDrinkRow(dIdx, { extraPrice: parseFloat(e.target.value) || 0 })}
+                              placeholder="0 RWF"
+                              className="w-full px-2 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-emerald-400 font-mono font-bold outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/60 text-[10px]">
+                          <input
+                            type="text"
+                            value={drinkRow.notes || ''}
+                            onChange={(e) => handleUpdateDrinkRow(dIdx, { notes: e.target.value })}
+                            placeholder="Serving notes e.g., 'Served chilled with ice and lemon slice'..."
+                            className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-800 text-slate-300 outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveDrinkRow(dIdx)}
+                            className="text-rose-400 hover:text-rose-300 font-bold shrink-0 cursor-pointer"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 

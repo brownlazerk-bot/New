@@ -19,6 +19,7 @@ interface OrderDetailsModalProps {
   onPrintReceipt: (order: Order) => void;
   onPrintKot?: (order: Order) => void;
   onCancelOrder: (order: Order) => void;
+  onDeleteOrder?: (orderId: string) => void;
   onEditOrder?: (order: Order) => void;
   darkMode: boolean;
   userRole: 'Cashier' | 'Manager';
@@ -32,6 +33,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
   onPrintReceipt,
   onPrintKot,
   onCancelOrder,
+  onDeleteOrder,
   onEditOrder,
   darkMode,
   userRole
@@ -363,23 +365,41 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
             </button>
           )}
 
-          {userRole === 'Manager' || order.status !== 'Paid' ? (
-            <button
-              onClick={() => {
-                if (confirm('Are you sure you want to cancel this order? All stock items will be returned to inventory.')) {
-                  onCancelOrder(order);
-                  onClose();
-                }
-              }}
-              className="py-2.5 rounded-xl bg-rose-100 dark:bg-rose-950/60 hover:bg-rose-200 text-rose-700 dark:text-rose-300 font-bold text-xs cursor-pointer"
-            >
-              Cancel Order
-            </button>
-          ) : (
-            <button onClick={onClose} className="py-2.5 rounded-xl bg-gray-200 dark:bg-gray-800 text-xs font-bold cursor-pointer">
-              Close
-            </button>
+          {(userRole === 'Manager' || order.status !== 'Paid') && (
+            <div className="flex gap-2">
+              {order.status !== 'Cancelled' && (
+                <button
+                  onClick={() => {
+                    if (confirm(`Are you sure you want to CANCEL Order #${order.orderNumber || order.id}? All stock (including recipes & drink pairings), payments, and kitchen tickets will be reversed.`)) {
+                      onCancelOrder(order);
+                      onClose();
+                    }
+                  }}
+                  className="py-2.5 px-3 rounded-xl bg-amber-100 dark:bg-amber-950/80 hover:bg-amber-200 text-amber-800 dark:text-amber-200 font-bold text-xs cursor-pointer"
+                >
+                  Cancel Order
+                </button>
+              )}
+
+              {onDeleteOrder && (
+                <button
+                  onClick={() => {
+                    if (confirm(`Are you sure you want to PERMANENTLY DELETE Order #${order.orderNumber || order.id}? The order will be removed and all stock, recipe ingredients, drink pairings & cash refunded.`)) {
+                      onDeleteOrder(order.id);
+                      onClose();
+                    }
+                  }}
+                  className="py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs cursor-pointer shadow-md"
+                >
+                  Delete Order
+                </button>
+              )}
+            </div>
           )}
+
+          <button onClick={onClose} className="py-2.5 px-4 rounded-xl bg-gray-200 dark:bg-gray-800 text-xs font-bold cursor-pointer">
+            Close
+          </button>
         </div>
 
       </div>

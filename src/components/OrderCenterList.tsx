@@ -594,17 +594,30 @@ export const OrderCenterList: React.FC<OrderCenterListProps> = ({
                           {/* Cancel Order */}
                           {order.status !== 'Cancelled' && (
                             <button
-                              title="Cancel Order & Return Stock"
+                              title="Cancel Order & Return Stock & Refund Money"
                               onClick={() => {
-                                if (confirm(`Cancel Order ${order.orderNumber || order.id}? All stock will be returned to inventory.`)) {
+                                if (confirm(`Cancel Order ${order.orderNumber || order.id}? All stock (including recipes & drink pairings) will be returned and money refunded.`)) {
                                   handleCancelOrder(order);
                                 }
                               }}
-                              className="p-1.5 rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300 hover:bg-rose-200"
+                              className="p-1.5 rounded-lg bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 hover:bg-amber-200"
                             >
                               <X className="w-3.5 h-3.5" />
                             </button>
                           )}
+
+                          {/* Delete Order Completely */}
+                          <button
+                            title="Delete Order Completely (Restore Stock & Money)"
+                            onClick={() => {
+                              if (confirm(`Permanently DELETE Order ${order.orderNumber || order.id}? Order will be removed and all stock, recipe ingredients, drink pairings & cash fully restored.`)) {
+                                onDeleteOrderAndReturnStock(order.id);
+                              }
+                            }}
+                            className="p-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
 
                         </div>
                       </td>
@@ -671,6 +684,10 @@ export const OrderCenterList: React.FC<OrderCenterListProps> = ({
           onPrintKot={onPrintKot}
           onCancelOrder={(ord) => {
             handleCancelOrder(ord);
+            setActiveOrderForDetails(null);
+          }}
+          onDeleteOrder={(ordId) => {
+            onDeleteOrderAndReturnStock(ordId);
             setActiveOrderForDetails(null);
           }}
         />

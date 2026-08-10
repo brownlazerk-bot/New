@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   MenuItem, KitchenIngredient, RecipeIngredient, KitchenIngredientCategory,
-  StockMovementRecord, KitchenWasteRecord, WasteType, AppUser 
+  StockMovementRecord, KitchenWasteRecord, WasteType, AppUser, AccompanyingDrink 
 } from '../types';
 import { formatCurrency } from '../lib/currency';
 import { 
@@ -10,7 +10,8 @@ import {
 import { 
   Utensils, Plus, Edit2, Trash2, CheckCircle2, AlertTriangle, 
   XCircle, Package, Scale, Layers, ChefHat, Search, Filter, RefreshCw, Info, DollarSign, Calculator,
-  TrendingDown, FileText, ArrowUpRight, ArrowDownRight, Activity, ShieldAlert, ShieldCheck, Clock, Calendar, User
+  TrendingDown, FileText, ArrowUpRight, ArrowDownRight, Activity, ShieldAlert, ShieldCheck, Clock, Calendar, User,
+  Wine
 } from 'lucide-react';
 
 interface KitchenRecipeManagerProps {
@@ -19,7 +20,7 @@ interface KitchenRecipeManagerProps {
   stockMovements?: StockMovementRecord[];
   wasteRecords?: KitchenWasteRecord[];
   onSaveIngredients: (ingredients: KitchenIngredient[]) => void;
-  onSaveRecipe: (menuItemId: string, recipe: RecipeIngredient[]) => void;
+  onSaveRecipe: (menuItemId: string, recipe: RecipeIngredient[], accompanyingDrinks?: AccompanyingDrink[]) => void;
   onAddWasteRecord?: (waste: Omit<KitchenWasteRecord, 'id' | 'timestamp' | 'date'>) => KitchenWasteRecord;
   loggedInUser?: AppUser;
   darkMode?: boolean;
@@ -86,6 +87,7 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
   const [showRecipeModal, setShowRecipeModal] = useState(false);
   const [selectedMenuItem, setSelectedMenuItem] = useState<MenuItem | null>(null);
   const [recipeDraft, setRecipeDraft] = useState<RecipeIngredient[]>([]);
+  const [accompanyingDrinksDraft, setAccompanyingDrinksDraft] = useState<AccompanyingDrink[]>([]);
 
   // Waste Modal State
   const [showWasteModal, setShowWasteModal] = useState(false);
@@ -274,6 +276,7 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
   // Open Recipe Modal
   const openRecipeModal = (item: MenuItem) => {
     setSelectedMenuItem(item);
+    setAccompanyingDrinksDraft(item.accompanyingDrinks ? [...item.accompanyingDrinks] : []);
     if (item.recipe && item.recipe.length > 0) {
       setRecipeDraft([...item.recipe]);
     } else {
@@ -347,9 +350,33 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
     setRecipeDraft(updated);
   };
 
+  // Accompanying drink handlers
+  const addDrinkRow = () => {
+    const newDrink: AccompanyingDrink = {
+      id: `drk-${Date.now()}-${accompanyingDrinksDraft.length + 1}`,
+      drinkName: '',
+      quantity: 1,
+      unit: 'Bottle',
+      extraPrice: 0,
+      notes: ''
+    };
+    setAccompanyingDrinksDraft([...accompanyingDrinksDraft, newDrink]);
+  };
+
+  const updateDrinkRow = (idx: number, updates: Partial<AccompanyingDrink>) => {
+    const updated = [...accompanyingDrinksDraft];
+    updated[idx] = { ...updated[idx], ...updates };
+    setAccompanyingDrinksDraft(updated);
+  };
+
+  const removeDrinkRow = (idx: number) => {
+    const updated = accompanyingDrinksDraft.filter((_, i) => i !== idx);
+    setAccompanyingDrinksDraft(updated);
+  };
+
   const handleSaveRecipeDraft = () => {
     if (!selectedMenuItem) return;
-    onSaveRecipe(selectedMenuItem.id, recipeDraft);
+    onSaveRecipe(selectedMenuItem.id, recipeDraft, accompanyingDrinksDraft);
     setShowRecipeModal(false);
   };
 
@@ -1254,6 +1281,116 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
                   })}
                 </div>
               )}
+
+              {/* Accompanying Drink Pairings Section */}
+              <div className="space-y-3 pt-3 border-t border-slate-800">
+                <div className="flex justify-between items-center bg-sky-950/60 p-3 rounded-xl border border-sky-800/60">
+                  <span className="font-bold text-sky-300 flex items-center gap-1.5">
+                    <Wine className="w-4 h-4 text-sky-400" />
+                    <span>Accompanying Drink Pairings (Beverage Recommendations)</span>
+                  </span>
+                  <button
+                    onClick={addDrinkRow}
+                    className="px-3 py-1.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-black text-xs flex items-center space-x-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ Add Drink Pairing</span>
+                  </button>
+                </div>
+
+                {accompanyingDrinksDraft.length === 0 ? (
+                  <p className="text-xs text-slate-500 text-center py-3 border border-dashed border-slate-800 rounded-xl">
+                    No accompanying drinks attached yet. Click "+ Add Drink Pairing" to suggest beverages for this dish.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {accompanyingDrinksDraft.map((drinkRow, dIdx) => (
+                      <div key={drinkRow.id || dIdx} className="p-3 bg-slate-950 rounded-2xl border border-sky-900/40 space-y-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                          <div className="sm:col-span-4">
+                            <label className="block text-[10px] text-slate-400 font-bold mb-1">Select Menu Drink</label>
+                            <select
+                              value={drinkRow.menuItemId || ''}
+                              onChange={(e) => {
+                                const selectedMenu = menuItems.find(m => m.id === e.target.value);
+                                updateDrinkRow(dIdx, {
+                                  menuItemId: e.target.value,
+                                  drinkName: selectedMenu ? selectedMenu.name : drinkRow.drinkName
+                                });
+                              }}
+                              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-white font-bold"
+                            >
+                              <option value="">-- Custom Drink Name --</option>
+                              {menuItems.map(m => (
+                                <option key={m.id} value={m.id}>
+                                  [{m.category}] {m.name} ({formatCurrency(m.price)})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="sm:col-span-3">
+                            <label className="block text-[10px] text-slate-400 font-bold mb-1">Drink Name</label>
+                            <input
+                              type="text"
+                              value={drinkRow.drinkName}
+                              onChange={(e) => updateDrinkRow(dIdx, { drinkName: e.target.value })}
+                              placeholder="e.g. Fresh Orange Juice"
+                              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-sky-300 font-bold"
+                            />
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className="block text-[10px] text-slate-400 font-bold mb-1">Qty & Unit</label>
+                            <div className="flex space-x-1">
+                              <input
+                                type="number"
+                                min="1"
+                                value={drinkRow.quantity}
+                                onChange={(e) => updateDrinkRow(dIdx, { quantity: parseInt(e.target.value) || 1 })}
+                                className="w-12 px-1 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-amber-300 font-bold text-center"
+                              />
+                              <input
+                                type="text"
+                                value={drinkRow.unit || 'Bottle'}
+                                onChange={(e) => updateDrinkRow(dIdx, { unit: e.target.value })}
+                                className="w-full px-1.5 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-[11px]"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="sm:col-span-3">
+                            <label className="block text-[10px] text-slate-400 font-bold mb-1">Extra Price</label>
+                            <input
+                              type="number"
+                              value={drinkRow.extraPrice || 0}
+                              onChange={(e) => updateDrinkRow(dIdx, { extraPrice: parseFloat(e.target.value) || 0 })}
+                              placeholder="0 RWF"
+                              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-emerald-400 font-mono font-bold"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/60">
+                          <input
+                            type="text"
+                            value={drinkRow.notes || ''}
+                            onChange={(e) => updateDrinkRow(dIdx, { notes: e.target.value })}
+                            placeholder="Serving notes e.g., 'Served chilled with ice'..."
+                            className="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-slate-300 text-[10px]"
+                          />
+                          <button
+                            onClick={() => removeDrinkRow(dIdx)}
+                            className="p-1 text-rose-400 hover:text-rose-300 shrink-0 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {/* Recipe Cost Summary */}
               {recipeDraft.length > 0 && (

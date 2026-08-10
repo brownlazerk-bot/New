@@ -339,13 +339,14 @@ export default function App() {
     saveRecipes(newRecipes);
   };
 
-  const handleSaveRecipe = (menuItemId: string, recipe: RecipeIngredient[]) => {
+  const handleSaveRecipe = (menuItemId: string, recipe: RecipeIngredient[], accompanyingDrinks?: AccompanyingDrink[]) => {
     const updated = menuItems.map(m => {
       if (m.id === menuItemId) {
         return {
           ...m,
-          hasRecipe: recipe.length > 0,
-          recipe: recipe
+          hasRecipe: recipe.length > 0 || (accompanyingDrinks && accompanyingDrinks.length > 0),
+          recipe: recipe,
+          ...(accompanyingDrinks ? { accompanyingDrinks } : {})
         };
       }
       return m;
@@ -359,7 +360,7 @@ export default function App() {
         userEmail: currentUser.email,
         action: 'Save Dish Recipe',
         category: 'Inventory',
-        details: `Saved ${recipe.length} ingredient recipe for ${menuItems.find(m => m.id === menuItemId)?.name || menuItemId}`
+        details: `Saved ${recipe.length} ingredients & ${accompanyingDrinks?.length || 0} accompanying drinks for ${menuItems.find(m => m.id === menuItemId)?.name || menuItemId}`
       });
     }
   };
@@ -660,7 +661,7 @@ export default function App() {
     setReceiptOrder(completedOrder);
   };
 
-  // Helper to Return Stock to Inventory for an order
+  // Helper to Return Stock to Inventory for an order (Menu items + Accompanying Drinks + Raw Recipe Ingredients)
   const restoreOrderStockToInventory = (orderToCancel: Order, reasonText: string) => {
     let updatedMenuItems = [...menuItems];
     let newLogs: StockAdjustmentLog[] = [...stockLogs];
@@ -668,13 +669,14 @@ export default function App() {
     orderToCancel.items.forEach((item) => {
       const targetIndex = updatedMenuItems.findIndex(m => m.id === item.itemId);
       if (targetIndex > -1) {
-        const prevStock = updatedMenuItems[targetIndex].stockQuantity;
+        const menuItem = updatedMenuItems[targetIndex];
+        const prevStock = menuItem.stockQuantity;
         const newStock = prevStock + item.quantity;
 
         updatedMenuItems[targetIndex] = {
-          ...updatedMenuItems[targetIndex],
+          ...menuItem,
           stockQuantity: newStock,
-          status: newStock > 0 ? 'Available' : updatedMenuItems[targetIndex].status
+          status: newStock > 0 ? 'Available' : menuItem.status
         };
 
         newLogs.unshift({
@@ -689,6 +691,41 @@ export default function App() {
           timestamp: new Date().toISOString(),
           actor: currentShift?.cashierName || currentUser?.fullName || 'System'
         });
+
+        // Restore Accompanying Drink Pairings attached to this dish if any
+        if (menuItem.accompanyingDrinks && menuItem.accompanyingDrinks.length > 0) {
+          menuItem.accompanyingDrinks.forEach(drink => {
+            const drinkQtyToRestore = (drink.quantity || 1) * item.quantity;
+            const drinkIndex = updatedMenuItems.findIndex(m => 
+              (drink.menuItemId && m.id === drink.menuItemId) ||
+              m.name.toLowerCase() === drink.drinkName.toLowerCase()
+            );
+            if (drinkIndex > -1) {
+              const dMenuItem = updatedMenuItems[drinkIndex];
+              const dPrevStock = dMenuItem.stockQuantity;
+              const dNewStock = dPrevStock + drinkQtyToRestore;
+
+              updatedMenuItems[drinkIndex] = {
+                ...dMenuItem,
+                stockQuantity: dNewStock,
+                status: dNewStock > 0 ? 'Available' : dMenuItem.status
+              };
+
+              newLogs.unshift({
+                id: `log-drk-${Date.now()}-${Math.random()}`,
+                itemId: dMenuItem.id,
+                itemName: dMenuItem.name,
+                type: 'Return',
+                quantityChange: drinkQtyToRestore,
+                previousStock: dPrevStock,
+                newStock: dNewStock,
+                reason: `Accompanying Drink Restored (${drink.drinkName} for ${item.name} #${orderToCancel.orderNumber || orderToCancel.id})`,
+                timestamp: new Date().toISOString(),
+                actor: currentShift?.cashierName || currentUser?.fullName || 'System'
+              });
+            }
+          });
+        }
       }
     });
 
@@ -696,7 +733,7 @@ export default function App() {
     updateStockLogsState(newLogs);
 
     // Restore raw ingredients for dishes with recipes
-    processOrderRecipeDeductions(orderToCancel.items, 'restore');
+    processOrderRecipeDeductions(orderToCancel.items, 'restore', orderToCancel.id);
   };
 
   // Helper to release table if no other active unpaid order exists on it
@@ -723,25 +760,66 @@ export default function App() {
     }
   };
 
-  // 1. Cancel Order with Direct Stock Restoration
+  // 1. Cancel Order with Complete Stock, Recipe, Drink, Cash Reversal & KOT Cancellation
   const handleCancelOrderAndReturnStock = (orderToCancel: Order) => {
     playSound('order');
 
-    // Return Stock if not already cancelled
+    // Return Stock & Money if not already cancelled
     if (orderToCancel.status !== 'Cancelled') {
+      // 1. Restore Stock (Menu items + accompanying drinks + raw recipe ingredients)
       restoreOrderStockToInventory(orderToCancel, 'Direct Stock Restoration on Order Cancellation');
+
+      // 2. Money / Cash Reversal entry in cash ledger
+      if (orderToCancel.amountPaid > 0) {
+        addCashMovement({
+          amount: -Math.abs(orderToCancel.amountPaid),
+          movementType: 'Order Cancellation / Refund',
+          type: 'OUT',
+          reason: `Refund/Payment Reversal for Cancelled Order #${orderToCancel.orderNumber || orderToCancel.id}`,
+          notes: `Reversed ${formatCurrency(orderToCancel.amountPaid)} paid via ${orderToCancel.paymentMethod || 'Cash'}`,
+          user: currentUser?.fullName || orderToCancel.cashierName || 'Cashier',
+          shiftId: orderToCancel.shiftId || currentShift?.id || 'SHIFT',
+          businessDate: orderToCancel.businessDate || new Date().toISOString().split('T')[0],
+          referenceId: orderToCancel.id
+        });
+        setCashMovements(loadCashMovements());
+      }
+
+      // 3. Kitchen Ticket (KOT) Cancellation
+      const updatedKots = kitchenTickets.map(kt => {
+        if (kt.orderId === orderToCancel.id || (orderToCancel.kotId && kt.id === orderToCancel.kotId)) {
+          return { ...kt, status: 'Cancelled' as KitchenTicketStatus };
+        }
+        return kt;
+      });
+      updateKitchenTicketsState(updatedKots);
+
+      // 4. Guest Room Balance Reversal if room charge
+      if (orderToCancel.guestRoomId || orderToCancel.paymentDetails?.selectedRoomId) {
+        const roomId = orderToCancel.guestRoomId || orderToCancel.paymentDetails?.selectedRoomId;
+        const updatedRooms = guestRooms.map(r => {
+          if (r.id === roomId) {
+            return { ...r, balance: Math.max(0, r.balance - orderToCancel.total) };
+          }
+          return r;
+        });
+        updateGuestRoomsState(updatedRooms);
+      }
     }
 
     // Release Table
-    if (orderToCancel.tableId) {
-      releaseTableIfEmpty(orderToCancel.tableId);
+    if (orderToCancel.tableId || orderToCancel.tableNumber) {
+      releaseTableIfEmpty(orderToCancel.tableId, orderToCancel.tableNumber);
     }
 
     // Update Order Status
     const updatedOrder: Order = {
       ...orderToCancel,
       status: 'Cancelled',
-      paymentStatus: 'UNPAID'
+      paymentStatus: 'UNPAID',
+      amountPaid: 0,
+      balance: 0,
+      updatedAt: new Date().toISOString()
     };
 
     const updatedOrders = orders.map(o => o.id === orderToCancel.id ? updatedOrder : o);
@@ -753,25 +831,61 @@ export default function App() {
         userName: currentUser.fullName,
         userRole: currentUser.role,
         userEmail: currentUser.email,
-        action: 'Cancel Order & Return Stock',
+        action: 'Cancel Order & Return Everything',
         category: 'Sales',
-        details: `Cancelled order #${orderToCancel.orderNumber || orderToCancel.id} - ${orderToCancel.items.length} items directly returned to inventory stock`
+        details: `Cancelled order #${orderToCancel.orderNumber || orderToCancel.id} - Menu stock, recipe ingredients, drink pairings, money payment & KOT restored/cancelled.`
       });
     }
   };
 
-  // 2. Delete Order completely with Direct Stock Restoration
+  // 2. Delete Order completely with Full Stock, Recipe, Drink & Cash Reversal
   const handleDeleteOrderAndReturnStock = (orderId: string) => {
     const targetOrder = orders.find(o => o.id === orderId);
     if (!targetOrder) return;
 
     if (targetOrder.status !== 'Cancelled') {
+      // 1. Restore Stock (Menu items + accompanying drinks + raw recipe ingredients)
       restoreOrderStockToInventory(targetOrder, 'Stock Restored on Order Deletion');
-      if (targetOrder.tableId) {
-        releaseTableIfEmpty(targetOrder.tableId);
+
+      // 2. Cash / Payment Reversal
+      if (targetOrder.amountPaid > 0) {
+        addCashMovement({
+          amount: -Math.abs(targetOrder.amountPaid),
+          movementType: 'Order Cancellation / Refund',
+          type: 'OUT',
+          reason: `Refund/Payment Reversal for Deleted Order #${targetOrder.orderNumber || targetOrder.id}`,
+          notes: `Reversed ${formatCurrency(targetOrder.amountPaid)} paid via ${targetOrder.paymentMethod || 'Cash'}`,
+          user: currentUser?.fullName || targetOrder.cashierName || 'Cashier',
+          shiftId: targetOrder.shiftId || currentShift?.id || 'SHIFT',
+          businessDate: targetOrder.businessDate || new Date().toISOString().split('T')[0],
+          referenceId: targetOrder.id
+        });
+        setCashMovements(loadCashMovements());
+      }
+
+      // 3. Guest Room Balance Reversal
+      if (targetOrder.guestRoomId || targetOrder.paymentDetails?.selectedRoomId) {
+        const roomId = targetOrder.guestRoomId || targetOrder.paymentDetails?.selectedRoomId;
+        const updatedRooms = guestRooms.map(r => {
+          if (r.id === roomId) {
+            return { ...r, balance: Math.max(0, r.balance - targetOrder.total) };
+          }
+          return r;
+        });
+        updateGuestRoomsState(updatedRooms);
+      }
+
+      // 4. Release Table
+      if (targetOrder.tableId || targetOrder.tableNumber) {
+        releaseTableIfEmpty(targetOrder.tableId, targetOrder.tableNumber);
       }
     }
 
+    // 5. Remove or Cancel associated KOTs
+    const updatedKots = kitchenTickets.filter(kt => kt.orderId !== orderId && kt.id !== targetOrder.kotId);
+    updateKitchenTicketsState(updatedKots);
+
+    // 6. Delete Order Completely
     const updatedOrders = orders.filter(o => o.id !== orderId);
     updateOrdersState(updatedOrders);
 
@@ -781,9 +895,9 @@ export default function App() {
         userName: currentUser.fullName,
         userRole: currentUser.role,
         userEmail: currentUser.email,
-        action: 'Delete Order & Return Stock',
+        action: 'Delete Order & Return Everything',
         category: 'Sales',
-        details: `Deleted order #${targetOrder.orderNumber || targetOrder.id} - Stock restored`
+        details: `Deleted order #${targetOrder.orderNumber || targetOrder.id} completely - Stock, recipe ingredients, drink pairings & cash money fully restored.`
       });
     }
   };
