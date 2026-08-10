@@ -1028,8 +1028,8 @@ export const StockManagement: React.FC<StockManagementProps> = ({
       </div>
 
       <div class="instruction-box">
-        <strong>📋 INSPECTION & RECEIVING INSTRUCTIONS:</strong><br/>
-        Storekeeper / Receiver: Inspect physical items delivered. Tick <strong>[ ✓ ]</strong> the box for each verified item. Write actual received quantity or discrepancy notes in the rightmost column with a pen, then sign below.
+        <strong>📋 PHYSICAL RECEIVING INSTRUCTIONS:</strong><br/>
+        Storekeeper / Receiver: Inspect physical items delivered. Tick <strong>[ ✓ ]</strong> the box for each verified item received. Write the unit cost and total amount manually with a pen after physical inspection, then sign below.
       </div>
 
       <table>
@@ -1039,10 +1039,8 @@ export const StockManagement: React.FC<StockManagementProps> = ({
             <th>Item Name & Description</th>
             <th>Category</th>
             <th class="text-center">Ordered Qty</th>
-            <th class="text-right">Unit Cost</th>
-            <th class="text-right">Total Amount</th>
-            <th class="text-center">Destination Store</th>
-            <th style="width: 24%;">Physical Check: Actual Rec'd / Notes</th>
+            <th class="text-center" style="width: 20%;">Unit Cost (RWF)</th>
+            <th class="text-center" style="width: 22%;">Total Amount (RWF)</th>
           </tr>
         </thead>
         <tbody>
@@ -1056,21 +1054,19 @@ export const StockManagement: React.FC<StockManagementProps> = ({
               </td>
               <td style="color: #475569;">${item.category}</td>
               <td class="text-center" style="font-weight: 900; font-size: 12px;">${item.quantity}</td>
-              <td class="text-right">RWF ${item.unitCost.toLocaleString()}</td>
-              <td class="text-right" style="font-weight: 800;">RWF ${item.totalCost.toLocaleString()}</td>
-              <td class="text-center" style="font-weight: 700; color: #0284c7;">${item.destination || po.department}</td>
-              <td>
-                <div class="pen-area">Rec'd Qty: [ _____ ]</div>
-                <div class="pen-line"></div>
+              <td class="text-center">
+                <div style="border-bottom: 1.5px dashed #94a3b8; height: 18px; width: 85%; margin: 2px auto;"></div>
+              </td>
+              <td class="text-center">
+                <div style="border-bottom: 1.5px dashed #94a3b8; height: 18px; width: 85%; margin: 2px auto;"></div>
               </td>
             </tr>
           `).join('')}
           <tr class="total-row">
-            <td colspan="3">TOTAL ORDERED GOODS (${po.items.length} items)</td>
+            <td colspan="3">TOTAL ORDERED ITEMS (${po.items.length} items)</td>
             <td class="text-center">${po.items.reduce((acc, i) => acc + i.quantity, 0)} units</td>
-            <td></td>
-            <td class="text-right" style="color: #0284c7;">RWF ${po.totalAmount.toLocaleString()}</td>
-            <td colspan="2"></td>
+            <td class="text-center"><span style="font-size: 9px; color: #64748b;">(Manual Pen Fill)</span></td>
+            <td class="text-center"><span style="font-size: 9px; color: #64748b;">(Manual Pen Fill)</span></td>
           </tr>
         </tbody>
       </table>
