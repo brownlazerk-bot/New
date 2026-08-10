@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { 
   Search, Filter, Plus, DollarSign, Printer, ChefHat, 
   Eye, CheckCircle2, AlertCircle, Clock, Calendar, User, 
-  Phone, Receipt, ArrowUpDown, X, Tag, ShieldCheck, Sparkles, Waves, RefreshCw, Edit
+  Phone, Receipt, ArrowUpDown, X, Tag, ShieldCheck, Sparkles, Waves, RefreshCw, Edit, Trash2
 } from 'lucide-react';
 import { 
   Order, OrderStatus, PaymentStatus, Waiter, 

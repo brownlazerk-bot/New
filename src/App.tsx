@@ -8,7 +8,7 @@ import {
   MenuItem, Table, Waiter, Order, KitchenTicket, 
   StockAdjustmentLog, Shift, GuestRoom, UserRole, KitchenTicketStatus, TableStatus, AppUser,
   Expense, CashMovement, DailyClosingRecord, PurchaseOrder, KitchenIngredient, RecipeIngredient,
-  StockMovementRecord, KitchenWasteRecord, Recipe
+  StockMovementRecord, KitchenWasteRecord, Recipe, AccompanyingDrink
 } from './types';
 import { 
   loadMenuItems, saveMenuItems, loadTables, saveTables, 
@@ -774,7 +774,6 @@ export default function App() {
         addCashMovement({
           amount: -Math.abs(orderToCancel.amountPaid),
           movementType: 'Order Cancellation / Refund',
-          type: 'OUT',
           reason: `Refund/Payment Reversal for Cancelled Order #${orderToCancel.orderNumber || orderToCancel.id}`,
           notes: `Reversed ${formatCurrency(orderToCancel.amountPaid)} paid via ${orderToCancel.paymentMethod || 'Cash'}`,
           user: currentUser?.fullName || orderToCancel.cashierName || 'Cashier',
@@ -852,7 +851,6 @@ export default function App() {
         addCashMovement({
           amount: -Math.abs(targetOrder.amountPaid),
           movementType: 'Order Cancellation / Refund',
-          type: 'OUT',
           reason: `Refund/Payment Reversal for Deleted Order #${targetOrder.orderNumber || targetOrder.id}`,
           notes: `Reversed ${formatCurrency(targetOrder.amountPaid)} paid via ${targetOrder.paymentMethod || 'Cash'}`,
           user: currentUser?.fullName || targetOrder.cashierName || 'Cashier',

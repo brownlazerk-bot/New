@@ -541,6 +541,7 @@ export type CashMovementType =
   | 'Credit Payment Received' 
   | 'Expense Paid' 
   | 'Refund' 
+  | 'Order Cancellation / Refund'
   | 'Closing Cash'
   | 'Manual Adjustment';
 
@@ -552,6 +553,7 @@ export interface CashMovement {
   amount: number; // positive for cash in, negative for cash out
   movementType: CashMovementType;
   reason: string;
+  notes?: string;
   user: string;
   shiftId?: string;
   businessDate?: string;
