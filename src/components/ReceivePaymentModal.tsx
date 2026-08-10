@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { 
   DollarSign, CreditCard, Smartphone, Building, 
-  CheckCircle2, AlertCircle, X, User, Phone, FileText
+  CheckCircle2, AlertCircle, X, User, Phone, FileText, UserCheck, AlertTriangle
 } from 'lucide-react';
-import { Order, PaymentMethod, PaymentTransaction, GuestRoom } from '../types';
+import { Order, PaymentMethod, PaymentTransaction, GuestRoom, Employee } from '../types';
 import { formatCurrency } from '../lib/currency';
+import { loadEmployees } from '../lib/storage';
+import { chargeOrderToEmployee, EmployeeChargeReason } from '../lib/employeeChargeSystem';
 
 interface ReceivePaymentModalProps {
   order: Order;
@@ -30,7 +32,7 @@ export const ReceivePaymentModal: React.FC<ReceivePaymentModalProps> = ({
 }) => {
   const currentBalance = order.balance > 0 ? order.balance : Math.max(0, order.total - order.amountPaid);
   
-  const [paymentType, setPaymentType] = useState<'Full' | 'Partial' | 'Credit'>('Full');
+  const [paymentType, setPaymentType] = useState<'Full' | 'Partial' | 'Credit' | 'EmployeeCharge'>('Full');
   const [amountInput, setAmountInput] = useState<string>(currentBalance.toFixed(2));
   const [method, setMethod] = useState<PaymentMethod>('Cash');
   
@@ -39,14 +41,19 @@ export const ReceivePaymentModal: React.FC<ReceivePaymentModalProps> = ({
   const [cardPart, setCardPart] = useState<string>('');
   const [momoPart, setMomoPart] = useState<string>('');
   
-  // Credit & Room/Apartment inputs
+  // Credit & Room/Apartment & Employee inputs
+  const employeesList = loadEmployees().filter(e => e.status === 'Active');
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>(
+    order.waiterId || (employeesList[0]?.id || '')
+  );
+  const [chargeReason, setChargeReason] = useState<EmployeeChargeReason>('Employee Consumption');
   const [customerName, setCustomerName] = useState<string>(order.customerName || '');
   const [customerPhone, setCustomerPhone] = useState<string>(order.customerPhone || '');
   const [selectedRoomId, setSelectedRoomId] = useState<string>(order.guestRoomId || '');
   const [paymentNote, setPaymentNote] = useState<string>('');
   const [error, setError] = useState<string>('');
 
-  const handleTypeChange = (type: 'Full' | 'Partial' | 'Credit') => {
+  const handleTypeChange = (type: 'Full' | 'Partial' | 'Credit' | 'EmployeeCharge') => {
     setPaymentType(type);
     setError('');
     if (type === 'Full') {
@@ -56,12 +63,54 @@ export const ReceivePaymentModal: React.FC<ReceivePaymentModalProps> = ({
     } else if (type === 'Credit') {
       setAmountInput('0.00');
       setMethod('Credit');
+    } else if (type === 'EmployeeCharge') {
+      setAmountInput('0.00');
+      setMethod('Credit');
     }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+
+    if (paymentType === 'EmployeeCharge') {
+      if (!selectedEmployeeId) {
+        setError('Please select an employee to charge this bill/consumption to.');
+        return;
+      }
+
+      const result = chargeOrderToEmployee(
+        order.id,
+        selectedEmployeeId,
+        chargeReason,
+        paymentNote.trim(),
+        cashierName
+      );
+
+      if (!result.success) {
+        setError(result.message);
+        return;
+      }
+
+      // Update local state and trigger completion
+      const emp = employeesList.find(e => e.id === selectedEmployeeId);
+      const updated: Order = {
+        ...order,
+        customerName: `Staff Charge: ${emp?.fullName || 'Employee'}`,
+        customerPhone: emp?.phone || '',
+        paymentStatus: 'CREDIT',
+        status: 'Credit',
+        paymentMethod: 'Credit',
+        paymentDetails: {
+          method: 'Credit',
+          guestName: emp?.fullName,
+          guestPhone: emp?.phone
+        }
+      };
+
+      onPaymentSubmitted(updated, 0, 'Credit', { name: emp?.fullName || 'Staff', phone: emp?.phone || '' });
+      return;
+    }
 
     if (paymentType === 'Credit' || method === 'Credit') {
       if (!customerName.trim()) {
@@ -216,23 +265,23 @@ export const ReceivePaymentModal: React.FC<ReceivePaymentModalProps> = ({
           </div>
         </div>
 
-        {/* Payment Type Switcher (Full, Partial, Credit) */}
-        <div className="flex rounded-xl bg-gray-100 dark:bg-gray-800 p-1 mb-4">
+        {/* Payment Type Switcher (Full, Partial, Credit, Charge Staff) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 rounded-xl bg-gray-100 dark:bg-gray-800 p-1 mb-4">
           <button
             type="button"
             onClick={() => handleTypeChange('Full')}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+            className={`py-2 text-[11px] font-bold rounded-lg transition-all ${
               paymentType === 'Full'
                 ? 'bg-amber-500 text-white shadow-sm'
                 : 'text-gray-600 dark:text-gray-300 hover:text-gray-900'
             }`}
           >
-            Full Payment ({formatCurrency(currentBalance)})
+            Full Payment
           </button>
           <button
             type="button"
             onClick={() => handleTypeChange('Partial')}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+            className={`py-2 text-[11px] font-bold rounded-lg transition-all ${
               paymentType === 'Partial'
                 ? 'bg-amber-500 text-white shadow-sm'
                 : 'text-gray-600 dark:text-gray-300 hover:text-gray-900'
@@ -243,47 +292,119 @@ export const ReceivePaymentModal: React.FC<ReceivePaymentModalProps> = ({
           <button
             type="button"
             onClick={() => handleTypeChange('Credit')}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+            className={`py-2 text-[11px] font-bold rounded-lg transition-all ${
               paymentType === 'Credit'
                 ? 'bg-indigo-600 text-white shadow-sm'
                 : 'text-gray-600 dark:text-gray-300 hover:text-gray-900'
             }`}
           >
-            Record Credit / Debt
+            Customer Debt
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTypeChange('EmployeeCharge')}
+            className={`py-2 text-[11px] font-bold rounded-lg transition-all ${
+              paymentType === 'EmployeeCharge'
+                ? 'bg-rose-600 text-white shadow-sm'
+                : 'text-gray-600 dark:text-gray-300 hover:text-gray-900'
+            }`}
+          >
+            Charge Staff Salary
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
 
-          {/* Customer Info for Receipt / Debt */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div>
-              <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1 flex items-center">
-                <User className="w-3 h-3 mr-1 text-gray-400" />
-                Customer Name {paymentType === 'Credit' && <span className="text-rose-500">*</span>}
-              </label>
-              <input
-                type="text"
-                value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
-                placeholder="Guest Name"
-                className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800"
-              />
+          {/* If Employee Salary Deduction Mode */}
+          {paymentType === 'EmployeeCharge' ? (
+            <div className="space-y-3 p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50">
+              <div className="flex items-center gap-2 text-rose-700 dark:text-rose-400 font-bold text-xs">
+                <UserCheck className="w-4 h-4" />
+                <span>Automatic Employee Salary Advance / Loss Deduction</span>
+              </div>
+              <p className="text-[11px] text-rose-600 dark:text-rose-300 leading-relaxed">
+                This will record the unpaid bill ({formatCurrency(currentBalance)}) directly as an employee liability or consumption deduction against their monthly salary.
+              </p>
+
+              <div>
+                <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 uppercase mb-1">
+                  Responsible Employee (Staff / Guard / Waiter) *
+                </label>
+                <select
+                  value={selectedEmployeeId}
+                  onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 font-medium"
+                >
+                  <option value="">-- Select Employee --</option>
+                  {employeesList.map(e => (
+                    <option key={e.id} value={e.id}>
+                      {e.fullName} ({e.role || e.department} - ID: {e.employeeId})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 uppercase mb-1">
+                  Charge Reason / Category *
+                </label>
+                <select
+                  value={chargeReason}
+                  onChange={(e) => setChargeReason(e.target.value as EmployeeChargeReason)}
+                  className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 font-medium"
+                >
+                  <option value="Employee Consumption">Employee Consumption (Food / Beverage / Services consumed)</option>
+                  <option value="Unpaid Customer Walkout Loss">Unpaid Customer Walkout Loss (Customer left without paying)</option>
+                  <option value="Service Guard Liability (Pool/Sauna)">Service Guard Liability (Pool Guard / Sauna Guard duty error)</option>
+                  <option value="Staff Breakages & Damages">Staff Breakages & Equipment Damages</option>
+                  <option value="Other">Other Staff Liability</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 uppercase mb-1">
+                  Note / Incident Summary
+                </label>
+                <input
+                  type="text"
+                  value={paymentNote}
+                  onChange={(e) => setPaymentNote(e.target.value)}
+                  placeholder="e.g. Unpaid Pool ticket & drinks by runner customer"
+                  className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800"
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1 flex items-center">
-                <Phone className="w-3 h-3 mr-1 text-gray-400" />
-                Phone Number {paymentType === 'Credit' && <span className="text-rose-500">*</span>}
-              </label>
-              <input
-                type="text"
-                value={customerPhone}
-                onChange={(e) => setCustomerPhone(e.target.value)}
-                placeholder="+237 6..."
-                className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800"
-              />
+          ) : (
+            /* Customer Info for Receipt / Debt */
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1 flex items-center">
+                  <User className="w-3 h-3 mr-1 text-gray-400" />
+                  Customer Name {paymentType === 'Credit' && <span className="text-rose-500">*</span>}
+                </label>
+                <input
+                  type="text"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder="Guest Name"
+                  className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1 flex items-center">
+                  <Phone className="w-3 h-3 mr-1 text-gray-400" />
+                  Phone Number {paymentType === 'Credit' && <span className="text-rose-500">*</span>}
+                </label>
+                <input
+                  type="text"
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(e.target.value)}
+                  placeholder="+237 6..."
+                  className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800"
+                />
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Amount to Pay (If not credit) */}
           {paymentType !== 'Credit' && (

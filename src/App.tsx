@@ -49,6 +49,7 @@ import { IngredientsModule } from './components/IngredientsModule';
 import { RecipeModule } from './components/RecipeModule';
 import { MenuModule } from './components/MenuModule';
 import { WhatsAppAutomationCenter } from './components/WhatsAppAutomationCenter';
+import { HRManagement } from './components/HRManagement';
 import { NotificationCenter } from './components/NotificationCenter';
 import { ApprovalWorkflowCenter } from './components/ApprovalWorkflowCenter';
 import { InAppNotificationDrawer } from './components/InAppNotificationDrawer';
@@ -1945,6 +1946,13 @@ export default function App() {
             onUpdateDailyClosing={(updatedClosings) => updateDailyClosingsState(updatedClosings)}
             darkMode={darkMode}
             language={language}
+          />
+        )}
+
+        {activeTab === 'hr_payroll' && (
+          <HRManagement
+            loggedInUser={currentUser || undefined}
+            darkMode={darkMode}
           />
         )}
 

@@ -17,6 +17,8 @@ import {
   exportGenericPDF, exportGenericExcel 
 } from '../lib/exporter';
 import { formatCurrency } from '../lib/currency';
+import { loadEmployees } from '../lib/storage';
+import { chargeOrderToEmployee } from '../lib/employeeChargeSystem';
 
 import { Language, getTranslation } from '../lib/translations';
 
@@ -1742,11 +1744,62 @@ export const DailyReportView: React.FC<DailyReportViewProps> = ({
                 />
               </div>
 
+              <div className="pt-3 border-t border-gray-200 dark:border-gray-800 space-y-2">
+                <p className="text-[10px] font-bold text-rose-500 uppercase">Or Transfer Unpaid Bill to Staff Salary Deduction</p>
+                <div className="space-y-2 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50">
+                  <select
+                    id="transferEmpSelect"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs font-medium"
+                    defaultValue=""
+                  >
+                    <option value="">-- Select Responsible Employee --</option>
+                    {loadEmployees().filter(e => e.status === 'Active').map(e => (
+                      <option key={e.id} value={e.id}>
+                        {e.fullName} ({e.role || e.department})
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    id="transferReasonSelect"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs font-medium"
+                    defaultValue="Unpaid Customer Walkout Loss"
+                  >
+                    <option value="Unpaid Customer Walkout Loss">Unpaid Customer Walkout Loss (Customer left without paying)</option>
+                    <option value="Employee Consumption">Employee Consumption</option>
+                    <option value="Service Guard Liability (Pool/Sauna)">Service Guard Liability (Pool Guard / Sauna Guard)</option>
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const empSel = (document.getElementById('transferEmpSelect') as HTMLSelectElement)?.value;
+                      const reasonSel = (document.getElementById('transferReasonSelect') as HTMLSelectElement)?.value as any;
+                      if (!empSel) {
+                        alert('Please select an employee to transfer this bill to.');
+                        return;
+                      }
+                      const res = chargeOrderToEmployee(payingCreditOrder.id, empSel, reasonSel, 'Transferred from Debt Collection Modal', currentUser?.fullName);
+                      if (res.success) {
+                        alert(res.message);
+                        setPayingCreditOrder(null);
+                        window.location.reload();
+                      } else {
+                        alert(res.message);
+                      }
+                    }}
+                    className="w-full py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-sm cursor-pointer"
+                  >
+                    Transfer Bill to Employee Salary Deduction
+                  </button>
+                </div>
+              </div>
+
               <button
                 type="submit"
                 className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-lg shadow-emerald-600/20"
               >
-                Record Debt Payment
+                Record Cash/Card Debt Payment
               </button>
             </form>
           </div>

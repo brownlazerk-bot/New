@@ -4,13 +4,18 @@ import {
   Expense, CashMovement, DailyClosingRecord, PurchaseOrder, KitchenIngredient,
   StockMovementRecord, KitchenWasteRecord, Recipe,
   WhatsAppSettings, WhatsAppRecipient, ReportDeliveryRule, ReportDeliveryHistory,
-  MessageTemplate, NotificationItem, NotificationRule, ApprovalRule, ApprovalRequest
+  MessageTemplate, NotificationItem, NotificationRule, ApprovalRule, ApprovalRequest,
+  Employee, SalaryAdvance, PayrollRecord, AttendanceRecord
 } from '../types';
 import { 
   INITIAL_MENU_ITEMS, INITIAL_TABLES, INITIAL_WAITERS, 
   INITIAL_GUEST_ROOMS, INITIAL_ORDERS, INITIAL_KITCHEN_TICKETS,
   INITIAL_PURCHASE_ORDERS, INITIAL_KITCHEN_INGREDIENTS
 } from '../data/mockData';
+import {
+  INITIAL_EMPLOYEES, INITIAL_SALARY_ADVANCES,
+  INITIAL_PAYROLL_RECORDS, INITIAL_ATTENDANCE_RECORDS
+} from '../data/mockHRData';
 import {
   INITIAL_WHATSAPP_SETTINGS,
   INITIAL_WHATSAPP_RECIPIENTS,
@@ -57,6 +62,10 @@ const KEYS = {
   CATEGORIES: 'hotel_categories_prod',
   INVENTORY_ITEMS: 'hotel_inventory_items_prod',
   BUSINESSES: 'hotel_businesses_prod',
+  EMPLOYEES: 'hotel_employees_prod',
+  SALARY_ADVANCES: 'hotel_salary_advances_prod',
+  PAYROLL_RECORDS: 'hotel_payroll_records_prod',
+  ATTENDANCE_RECORDS: 'hotel_attendance_records_prod',
 };
 
 export const SUPER_ADMIN_CREDENTIALS: AppUser = {
@@ -654,6 +663,39 @@ export function addApprovalRequestRecord(req: Omit<ApprovalRequest, 'id' | 'crea
   };
   saveApprovalRequests([created, ...requests]);
   return created;
+}
+
+// HR & Payroll Storage
+export function loadEmployees(): Employee[] {
+  return getStorage<Employee[]>(KEYS.EMPLOYEES, INITIAL_EMPLOYEES);
+}
+
+export function saveEmployees(employees: Employee[]): void {
+  setStorage(KEYS.EMPLOYEES, employees);
+}
+
+export function loadSalaryAdvances(): SalaryAdvance[] {
+  return getStorage<SalaryAdvance[]>(KEYS.SALARY_ADVANCES, INITIAL_SALARY_ADVANCES);
+}
+
+export function saveSalaryAdvances(advances: SalaryAdvance[]): void {
+  setStorage(KEYS.SALARY_ADVANCES, advances);
+}
+
+export function loadPayrollRecords(): PayrollRecord[] {
+  return getStorage<PayrollRecord[]>(KEYS.PAYROLL_RECORDS, INITIAL_PAYROLL_RECORDS);
+}
+
+export function savePayrollRecords(records: PayrollRecord[]): void {
+  setStorage(KEYS.PAYROLL_RECORDS, records);
+}
+
+export function loadAttendanceRecords(): AttendanceRecord[] {
+  return getStorage<AttendanceRecord[]>(KEYS.ATTENDANCE_RECORDS, INITIAL_ATTENDANCE_RECORDS);
+}
+
+export function saveAttendanceRecords(records: AttendanceRecord[]): void {
+  setStorage(KEYS.ATTENDANCE_RECORDS, records);
 }
 
 export function resetAllDataToDefault(): void {

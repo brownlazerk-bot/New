@@ -868,3 +868,84 @@ export interface ApprovalRequest {
   updatedAt: string;
 }
 
+// HR & Salary Payroll Management Types
+export interface Employee {
+  id: string;
+  employeeId: string; // e.g., "EMP-1001"
+  fullName: string;
+  department: 'Bar' | 'Kitchen' | 'Service / Waiters' | 'Reception' | 'Housekeeping' | 'Accounting' | 'Management' | 'Security' | 'Maintenance';
+  role: string;
+  phone: string;
+  email?: string;
+  nationalId?: string;
+  joiningDate: string;
+  employmentType: 'Full-time' | 'Part-time' | 'Contract' | 'Casual';
+  status: 'Active' | 'On Leave' | 'Suspended' | 'Terminated';
+  basicSalary: number; // monthly in RWF/local currency
+  housingAllowance?: number;
+  transportAllowance?: number;
+  otherBonus?: number;
+  pensionRate?: number; // e.g., 3% RSSB
+  taxRate?: number; // e.g., PAYE tax rate %
+  otherDeductions?: number;
+  bankName?: string;
+  bankAccount?: string;
+  mobileMoneyNumber?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface SalaryAdvance {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  department: string;
+  amount: number;
+  reason: string;
+  month: string; // YYYY-MM
+  requestDate: string;
+  status: 'Pending' | 'Approved' | 'Deducted' | 'Rejected';
+  approvedBy?: string;
+  paidAt?: string;
+}
+
+export interface PayrollRecord {
+  id: string;
+  payrollPeriod: string; // e.g. "2026-08"
+  employeeId: string;
+  employeeName: string;
+  department: string;
+  role: string;
+  basicSalary: number;
+  housingAllowance: number;
+  transportAllowance: number;
+  overtimePay: number;
+  bonus: number;
+  grossSalary: number;
+  rssbPension: number;
+  payeTax: number;
+  salaryAdvanceDeduction: number;
+  otherDeductions: number;
+  totalDeductions: number;
+  netSalary: number;
+  paymentStatus: 'Unpaid' | 'Processing' | 'Paid';
+  paymentMethod?: 'Bank Transfer' | 'Mobile Money' | 'Cash';
+  paymentReference?: string;
+  paidAt?: string;
+  processedBy?: string;
+}
+
+export interface AttendanceRecord {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  month: string; // YYYY-MM
+  daysWorked: number;
+  absentDays: number;
+  leaveDays: number;
+  overtimeHours: number;
+  notes?: string;
+}
+
