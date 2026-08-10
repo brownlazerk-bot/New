@@ -122,6 +122,12 @@ export const StockManagement: React.FC<StockManagementProps> = ({
   const [poDestination, setPoDestination] = useState<'Main Beverage Stock' | 'Bar Stock' | 'Kitchen Stock'>('Main Beverage Stock');
   const [poPaymentStatus, setPoPaymentStatus] = useState<'Paid' | 'Unpaid'>('Paid');
   const [autoReceive, setAutoReceive] = useState<boolean>(true);
+  const [poDraftItems, setPoDraftItems] = useState<PurchaseOrderItem[]>([]);
+  const [poItemType, setPoItemType] = useState<'beverages' | 'kitchen_dishes' | 'recipe_ingredients' | 'custom'>('beverages');
+  const [poCustomItemName, setPoCustomItemName] = useState<string>('');
+  const [poCustomCategory, setPoCustomCategory] = useState<string>('Kitchen / Dry Store');
+  const [poCustomUnit, setPoCustomUnit] = useState<string>('Kg');
+  const [poNotes, setPoNotes] = useState<string>('');
 
   // Edit Purchase Order Console Modal State
   const [showEditPOModal, setShowEditPOModal] = useState<boolean>(false);
@@ -148,9 +154,9 @@ export const StockManagement: React.FC<StockManagementProps> = ({
   const [reorderFilter, setReorderFilter] = useState<'all' | 'out_of_stock' | 'bar' | 'kitchen'>('all');
   const [reorderSearch, setReorderSearch] = useState<string>('');
 
-  // Compute unavailable (out of stock) and low stock items needing order
+  // Compute unavailable (out of stock) and low stock items needing order (menu items & kitchen ingredients)
   const unavailableItems = useMemo(() => {
-    return menuItems.map(item => {
+    const menuList = menuItems.map(item => {
       const isBar = isBarItem(item);
       const mainQty = item.mainStockQuantity || 0;
       const barQty = item.stockQuantity || 0;
@@ -160,20 +166,49 @@ export const StockManagement: React.FC<StockManagementProps> = ({
       const isLow = totalQty > 0 && totalQty <= minAlert;
 
       return {
-        item,
+        id: item.id,
+        name: item.name,
+        category: item.category,
+        unit: item.unit || 'pcs',
         isBar,
-        mainQty,
-        barQty,
+        isIngredient: false,
         totalQty,
         minAlert,
         isOut,
         isLow,
         needsOrder: isOut || isLow,
         suggestedQty: isBar ? (isOut ? 100 : 50) : (isOut ? 30 : 15),
-        unitCost: item.costPrice || Math.round(item.price * 0.6)
+        unitCost: item.costPrice || Math.round(item.price * 0.6),
+        rawItem: item
       };
     }).filter(x => x.needsOrder);
-  }, [menuItems]);
+
+    const ingList = (ingredients || []).map(ing => {
+      const totalQty = ing.stockQuantity || 0;
+      const minAlert = ing.minStockAlert || 5;
+      const isOut = totalQty <= 0;
+      const isLow = totalQty > 0 && totalQty <= minAlert;
+
+      return {
+        id: ing.id,
+        name: ing.name,
+        category: `Recipe Material (${ing.category || 'Kitchen'})`,
+        unit: ing.unit || 'Kg',
+        isBar: false,
+        isIngredient: true,
+        totalQty,
+        minAlert,
+        isOut,
+        isLow,
+        needsOrder: isOut || isLow,
+        suggestedQty: isOut ? 20 : 10,
+        unitCost: ing.costPerUnit || 1000,
+        rawIngredient: ing
+      };
+    }).filter(x => x.needsOrder);
+
+    return [...menuList, ...ingList];
+  }, [menuItems, ingredients]);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -927,6 +962,147 @@ export const StockManagement: React.FC<StockManagementProps> = ({
     printReportHTML(`Purchases Report - ${new Date().toISOString().split('T')[0]}`, html);
   };
 
+  // Print Single Purchase Order / Goods Receiving Voucher (with Physical Tick Boxes for Pen Inspection)
+  const handlePrintSinglePO = (po: PurchaseOrder) => {
+    const staffName = loggedInUser?.fullName || 'Storekeeper / Purchasing Officer';
+    const isReceived = po.status === 'Received';
+
+    const html = `
+      <style>
+        @page { size: A4 portrait; margin: 10mm; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; color: #0f172a; margin: 0; padding: 12px; line-height: 1.4; }
+        .header { text-align: center; border-bottom: 3px double #0284c7; padding-bottom: 8px; margin-bottom: 12px; }
+        .resort-title { font-size: 20px; font-weight: 900; color: #0f172a; letter-spacing: 0.5px; margin: 0; }
+        .voucher-title { font-size: 14px; font-weight: 800; color: #0284c7; text-transform: uppercase; margin: 3px 0 2px 0; }
+        .voucher-subtitle { font-size: 10px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+
+        .meta-container { display: flex; justify-content: space-between; gap: 15px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; margin-bottom: 12px; }
+        .meta-col { flex: 1; }
+        .meta-row { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 10.5px; }
+        .meta-label { font-weight: 700; color: #475569; }
+        .meta-value { font-weight: 800; color: #0f172a; }
+
+        .instruction-box { background: #fffbebe6; border: 1.5px dashed #f59e0b; padding: 8px 12px; border-radius: 6px; font-size: 10px; color: #92400e; margin-bottom: 12px; font-weight: 600; }
+
+        table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 10.5px; }
+        th { background: #0f172a; color: #ffffff; border: 1px solid #0f172a; padding: 7px 5px; font-weight: 800; text-align: left; font-size: 10px; text-transform: uppercase; }
+        td { border: 1px solid #cbd5e1; padding: 7px 5px; vertical-align: middle; }
+        
+        .tick-box-cell { text-align: center; width: 60px; }
+        .tick-box { width: 22px; height: 22px; border: 2px solid #0f172a; border-radius: 4px; margin: auto; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 15px; color: #0f172a; background: #ffffff; }
+
+        .pen-area { font-size: 9px; color: #64748b; }
+        .pen-line { border-bottom: 1px dashed #94a3b8; height: 16px; width: 100%; display: block; margin-top: 2px; }
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+        .total-row { background: #f1f5f9; font-weight: bold; border-top: 2px solid #0f172a; font-size: 11px; }
+
+        .notes-section { border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; margin-bottom: 15px; font-size: 10px; background: #fafafa; }
+
+        .signatures-grid { display: flex; justify-content: space-between; gap: 12px; margin-top: 25px; padding-top: 12px; border-top: 2px solid #e2e8f0; }
+        .sig-block { flex: 1; text-align: center; }
+        .sig-title { font-size: 10px; font-weight: 800; color: #334155; text-transform: uppercase; margin-bottom: 30px; }
+        .sig-line { border-top: 1px solid #0f172a; width: 85%; margin: 0 auto 3px auto; }
+        .sig-label { font-size: 9px; color: #64748b; font-weight: 600; }
+      </style>
+
+      <div class="header">
+        <h1 class="resort-title">SEVEN TO SEVEN - SKY VIEW RESORT</h1>
+        <div class="voucher-title">GOODS RECEIVING SHEET & PURCHASE ORDER VOUCHER</div>
+        <div class="voucher-subtitle">Physical Delivery Inspection & Inventory Intake Checklist</div>
+      </div>
+
+      <div class="meta-container">
+        <div class="meta-col">
+          <div class="meta-row"><span class="meta-label">PO Number:</span><span class="meta-value" style="color: #0284c7; font-size: 12px;">${po.poNumber}</span></div>
+          <div class="meta-row"><span class="meta-label">Order Date:</span><span class="meta-value">${po.date}</span></div>
+          <div class="meta-row"><span class="meta-label">Department:</span><span class="meta-value">${po.department}</span></div>
+          <div class="meta-row"><span class="meta-label">Issued By:</span><span class="meta-value">${po.createdByName || 'Storekeeper'}</span></div>
+        </div>
+        <div class="meta-col" style="border-left: 1px solid #cbd5e1; padding-left: 15px;">
+          <div class="meta-row"><span class="meta-label">Supplier Name:</span><span class="meta-value" style="font-size: 11px; color: #0369a1;">${po.supplierName}</span></div>
+          <div class="meta-row"><span class="meta-label">Payment Status:</span><span class="meta-value" style="color: ${po.paymentStatus === 'Paid' ? '#16a34a' : '#dc2626'};">${po.paymentStatus || 'Paid'}</span></div>
+          <div class="meta-row"><span class="meta-label">Status:</span><span class="meta-value" style="color: ${isReceived ? '#16a34a' : '#d97706'};">${isReceived ? '✓ RECEIVED IN STOCK' : '⏳ PENDING PHYSICAL INTAKE'}</span></div>
+          <div class="meta-row"><span class="meta-label">Print Time:</span><span class="meta-value">${new Date().toLocaleString()}</span></div>
+        </div>
+      </div>
+
+      <div class="instruction-box">
+        <strong>📋 INSPECTION & RECEIVING INSTRUCTIONS:</strong><br/>
+        Storekeeper / Receiver: Inspect physical items delivered. Tick <strong>[ ✓ ]</strong> the box for each verified item. Write actual received quantity or discrepancy notes in the rightmost column with a pen, then sign below.
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th class="tick-box-cell">[ ✓ ] Rec'd</th>
+            <th>Item Name & Description</th>
+            <th>Category</th>
+            <th class="text-center">Ordered Qty</th>
+            <th class="text-right">Unit Cost</th>
+            <th class="text-right">Total Amount</th>
+            <th class="text-center">Destination Store</th>
+            <th style="width: 24%;">Physical Check: Actual Rec'd / Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${po.items.map(item => `
+            <tr>
+              <td class="tick-box-cell">
+                <div class="tick-box">${isReceived ? '✓' : '&nbsp;'}</div>
+              </td>
+              <td>
+                <strong style="font-size: 11px; color: #0f172a;">${item.itemName}</strong>
+              </td>
+              <td style="color: #475569;">${item.category}</td>
+              <td class="text-center" style="font-weight: 900; font-size: 12px;">${item.quantity}</td>
+              <td class="text-right">RWF ${item.unitCost.toLocaleString()}</td>
+              <td class="text-right" style="font-weight: 800;">RWF ${item.totalCost.toLocaleString()}</td>
+              <td class="text-center" style="font-weight: 700; color: #0284c7;">${item.destination || po.department}</td>
+              <td>
+                <div class="pen-area">Rec'd Qty: [ _____ ]</div>
+                <div class="pen-line"></div>
+              </td>
+            </tr>
+          `).join('')}
+          <tr class="total-row">
+            <td colspan="3">TOTAL ORDERED GOODS (${po.items.length} items)</td>
+            <td class="text-center">${po.items.reduce((acc, i) => acc + i.quantity, 0)} units</td>
+            <td></td>
+            <td class="text-right" style="color: #0284c7;">RWF ${po.totalAmount.toLocaleString()}</td>
+            <td colspan="2"></td>
+          </tr>
+        </tbody>
+      </table>
+
+      ${po.notes ? `
+        <div class="notes-section">
+          <strong>Order Reference / Invoice Notes:</strong> ${po.notes}
+        </div>
+      ` : ''}
+
+      <div class="signatures-grid">
+        <div class="sig-block">
+          <div class="sig-title">Supplier / Delivery Driver</div>
+          <div class="sig-line"></div>
+          <div class="sig-label">Name, Signature & Phone</div>
+        </div>
+        <div class="sig-block">
+          <div class="sig-title">Storekeeper / Receiver</div>
+          <div class="sig-line"></div>
+          <div class="sig-label">Name: ${staffName}</div>
+        </div>
+        <div class="sig-block">
+          <div class="sig-title">Manager Approval</div>
+          <div class="sig-line"></div>
+          <div class="sig-label">Authorized Signature & Stamp</div>
+        </div>
+      </div>
+    `;
+
+    printReportHTML(`Receiving Voucher ${po.poNumber}`, html);
+  };
+
   // Open Stock Transfer Modal
   const openTransferModal = (item?: MenuItem) => {
     const barItems = menuItems.filter(m => isBarItem(m));
@@ -959,24 +1135,114 @@ export const StockManagement: React.FC<StockManagementProps> = ({
     }
   };
 
-  // Open PO Modal with optional preselected item
+  // Open PO Modal with optional preselected item or ingredient
   const openPOModal = (
     dept: 'Bar / Beverage' | 'Kitchen' = 'Bar / Beverage',
-    itemToPreselect?: MenuItem,
+    itemToPreselect?: MenuItem | KitchenIngredient,
     suggestedQty: number = 50,
     defaultSupplier?: string
   ) => {
     setPoDepartment(dept);
-    const deptItems = menuItems.filter(m => dept === 'Kitchen' ? isKitchenItem(m) : isBarItem(m));
-    const target = itemToPreselect || (deptItems.length > 0 ? deptItems[0] : null);
-    if (target) {
-      setPoItemId(target.id);
-      setPoUnitCost(target.costPrice || Math.round(target.price * 0.6));
-    }
     setPoSupplier(defaultSupplier || (dept === 'Bar / Beverage' ? 'Bralirwa / Wholesale Distributor' : 'Local Food Supplier'));
-    setPoQuantity(suggestedQty);
     setPoDestination(dept === 'Kitchen' ? 'Kitchen Stock' : 'Main Beverage Stock');
+    setPoQuantity(suggestedQty);
+    setPoNotes('');
+
+    if (itemToPreselect) {
+      const isIng = 'costPerUnit' in itemToPreselect && !('price' in itemToPreselect);
+      const unitCost = isIng 
+        ? (itemToPreselect as KitchenIngredient).costPerUnit 
+        : ((itemToPreselect as MenuItem).costPrice || Math.round((itemToPreselect as MenuItem).price * 0.6));
+      
+      const itemCat = itemToPreselect.category || (dept === 'Kitchen' ? 'Food' : 'Beverage');
+      setPoDraftItems([{
+        itemId: itemToPreselect.id,
+        itemName: itemToPreselect.name,
+        category: itemCat,
+        quantity: suggestedQty,
+        unitCost: unitCost,
+        totalCost: suggestedQty * unitCost,
+        destination: dept === 'Kitchen' ? 'Kitchen Stock' : 'Main Beverage Stock'
+      }]);
+      setPoItemType(isIng ? 'recipe_ingredients' : (dept === 'Kitchen' ? 'kitchen_dishes' : 'beverages'));
+      setPoItemId(itemToPreselect.id);
+      setPoUnitCost(unitCost);
+    } else {
+      setPoDraftItems([]);
+      setPoItemType(dept === 'Kitchen' ? 'recipe_ingredients' : 'beverages');
+      
+      if (dept === 'Bar / Beverage') {
+        const bev = menuItems.find(m => isBarItem(m));
+        if (bev) {
+          setPoItemId(bev.id);
+          setPoUnitCost(bev.costPrice || Math.round(bev.price * 0.6));
+        }
+      } else if (ingredients && ingredients.length > 0) {
+        setPoItemId(ingredients[0].id);
+        setPoUnitCost(ingredients[0].costPerUnit || 1000);
+      }
+    }
+
     setShowPOModal(true);
+  };
+
+  // Add Item to Draft Purchase Order
+  const handleAddDraftItem = () => {
+    let newItem: PurchaseOrderItem | null = null;
+
+    if (poItemType === 'beverages' || poItemType === 'kitchen_dishes') {
+      const item = menuItems.find(m => m.id === poItemId);
+      if (!item) {
+        alert('Please select a valid item from the catalog.');
+        return;
+      }
+      newItem = {
+        itemId: item.id,
+        itemName: item.name,
+        category: item.category,
+        quantity: Math.max(1, poQuantity),
+        unitCost: Math.max(0, poUnitCost),
+        totalCost: Math.max(1, poQuantity) * Math.max(0, poUnitCost),
+        destination: poItemType === 'beverages' ? poDestination : 'Kitchen Stock'
+      };
+    } else if (poItemType === 'recipe_ingredients') {
+      const ing = ingredients.find(g => g.id === poItemId);
+      if (!ing) {
+        alert('Please select a valid kitchen ingredient.');
+        return;
+      }
+      newItem = {
+        itemId: ing.id,
+        itemName: `${ing.name} (${ing.unit || 'Kg'})`,
+        category: ing.category || 'Recipe Material',
+        quantity: Math.max(1, poQuantity),
+        unitCost: Math.max(0, poUnitCost),
+        totalCost: Math.max(1, poQuantity) * Math.max(0, poUnitCost),
+        destination: 'Kitchen Stock'
+      };
+    } else {
+      // Custom item
+      if (!poCustomItemName.trim()) {
+        alert('Please enter a custom item name.');
+        return;
+      }
+      newItem = {
+        itemId: `custom-${Date.now()}`,
+        itemName: `${poCustomItemName.trim()} (${poCustomUnit})`,
+        category: poCustomCategory || 'Kitchen / Dry Store',
+        quantity: Math.max(1, poQuantity),
+        unitCost: Math.max(0, poUnitCost),
+        totalCost: Math.max(1, poQuantity) * Math.max(0, poUnitCost),
+        destination: poDepartment === 'Kitchen' ? 'Kitchen Stock' : poDestination
+      };
+    }
+
+    if (newItem) {
+      setPoDraftItems(prev => [...prev, newItem!]);
+      if (poItemType === 'custom') {
+        setPoCustomItemName('');
+      }
+    }
   };
 
   // Bulk Reorder All Out-Of-Stock Items
@@ -989,9 +1255,9 @@ export const StockManagement: React.FC<StockManagementProps> = ({
 
     if (onCreatePurchaseOrder) {
       const itemsList = outOfStockOnly.map(x => ({
-        itemId: x.item.id,
-        itemName: x.item.name,
-        category: x.item.category,
+        itemId: x.id,
+        itemName: x.name,
+        category: x.category,
         quantity: x.suggestedQty,
         unitCost: x.unitCost,
         totalCost: x.suggestedQty * x.unitCost,
@@ -1030,17 +1296,56 @@ export const StockManagement: React.FC<StockManagementProps> = ({
       alert('Please enter supplier name.');
       return;
     }
-    if (!poItemId) {
-      alert('Please select an item.');
-      return;
+
+    let finalItems = [...poDraftItems];
+
+    // If draft items is empty, try to create from current item inputs
+    if (finalItems.length === 0) {
+      if (poItemType === 'beverages' || poItemType === 'kitchen_dishes') {
+        const item = menuItems.find(m => m.id === poItemId);
+        if (item) {
+          finalItems.push({
+            itemId: item.id,
+            itemName: item.name,
+            category: item.category,
+            quantity: Math.max(1, poQuantity),
+            unitCost: Math.max(0, poUnitCost),
+            totalCost: Math.max(1, poQuantity) * Math.max(0, poUnitCost),
+            destination: poItemType === 'beverages' ? poDestination : 'Kitchen Stock'
+          });
+        }
+      } else if (poItemType === 'recipe_ingredients') {
+        const ing = ingredients.find(g => g.id === poItemId);
+        if (ing) {
+          finalItems.push({
+            itemId: ing.id,
+            itemName: `${ing.name} (${ing.unit || 'Kg'})`,
+            category: ing.category || 'Recipe Material',
+            quantity: Math.max(1, poQuantity),
+            unitCost: Math.max(0, poUnitCost),
+            totalCost: Math.max(1, poQuantity) * Math.max(0, poUnitCost),
+            destination: 'Kitchen Stock'
+          });
+        }
+      } else if (poCustomItemName.trim()) {
+        finalItems.push({
+          itemId: `custom-${Date.now()}`,
+          itemName: `${poCustomItemName.trim()} (${poCustomUnit})`,
+          category: poCustomCategory || 'Kitchen / Dry Store',
+          quantity: Math.max(1, poQuantity),
+          unitCost: Math.max(0, poUnitCost),
+          totalCost: Math.max(1, poQuantity) * Math.max(0, poUnitCost),
+          destination: poDepartment === 'Kitchen' ? 'Kitchen Stock' : poDestination
+        });
+      }
     }
-    if (poQuantity <= 0) {
-      alert('Please enter a valid quantity.');
+
+    if (finalItems.length === 0) {
+      alert('Please add at least one item to the purchase order.');
       return;
     }
 
-    const item = menuItems.find(m => m.id === poItemId);
-    if (!item) return;
+    const totalPOAmount = finalItems.reduce((acc, i) => acc + i.totalCost, 0);
 
     if (onCreatePurchaseOrder) {
       const createdPO = onCreatePurchaseOrder({
@@ -1048,22 +1353,14 @@ export const StockManagement: React.FC<StockManagementProps> = ({
         date: new Date().toISOString().split('T')[0],
         supplierName: poSupplier.trim(),
         department: poDepartment,
-        items: [{
-          itemId: item.id,
-          itemName: item.name,
-          category: item.category,
-          quantity: poQuantity,
-          unitCost: poUnitCost,
-          totalCost: poQuantity * poUnitCost,
-          destination: poDepartment === 'Kitchen' ? 'Kitchen Stock' : poDestination
-        }],
-        totalAmount: poQuantity * poUnitCost,
+        items: finalItems,
+        totalAmount: totalPOAmount,
         status: autoReceive ? 'Received' : 'Pending',
         paymentStatus: poPaymentStatus,
         createdByName: loggedInUser?.fullName || 'Storekeeper',
         receivedAt: autoReceive ? new Date().toISOString() : undefined,
         receivedByName: autoReceive ? (loggedInUser?.fullName || 'Storekeeper') : undefined,
-        notes: `Purchase for ${item.name} (${poQuantity} ${item.unit || 'pcs'})`
+        notes: poNotes.trim() || `Purchase order for ${finalItems.length} items from ${poSupplier.trim()}`
       });
 
       if (autoReceive && onReceivePurchaseOrder && createdPO) {
@@ -1072,6 +1369,13 @@ export const StockManagement: React.FC<StockManagementProps> = ({
 
       setShowPOModal(false);
       setPoSupplier('');
+      setPoDraftItems([]);
+
+      if (createdPO) {
+        if (confirm(`Purchase Order #${createdPO.poNumber} saved successfully!\n\nDo you want to print the Goods Receiving Sheet (with physical tick boxes for receiving inspection) now?`)) {
+          handlePrintSinglePO(createdPO);
+        }
+      }
     }
   };
   
@@ -1673,8 +1977,18 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                 className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs flex items-center space-x-2 border border-slate-700 shadow-md transition-all cursor-pointer"
               >
                 <Printer className="w-4 h-4 text-sky-400" />
-                <span>🖨️ Purchases Report</span>
+                <span>🖨️ Purchases Summary</span>
               </button>
+              {purchaseOrders.length > 0 && (
+                <button
+                  onClick={() => handlePrintSinglePO(purchaseOrders[0])}
+                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center space-x-2 shadow-md transition-all cursor-pointer"
+                  title="Print Goods Receiving Voucher with pen tick boxes for the latest purchase order"
+                >
+                  <Printer className="w-4 h-4 text-white" />
+                  <span>🖨️ Print Latest Voucher</span>
+                </button>
+              )}
               {unavailableItems.filter(x => x.isOut).length > 0 && (
                 <button
                   onClick={handleBulkReorderUnavailable}
@@ -1791,8 +2105,8 @@ export const StockManagement: React.FC<StockManagementProps> = ({
             {/* List / Cards of Items needing order */}
             {(() => {
               const filteredList = unavailableItems.filter(x => {
-                const matchesSearch = x.item.name.toLowerCase().includes(reorderSearch.toLowerCase()) ||
-                  x.item.category.toLowerCase().includes(reorderSearch.toLowerCase());
+                const matchesSearch = x.name.toLowerCase().includes(reorderSearch.toLowerCase()) ||
+                  x.category.toLowerCase().includes(reorderSearch.toLowerCase());
                 if (!matchesSearch) return false;
 
                 if (reorderFilter === 'out_of_stock') return x.isOut;
@@ -1813,11 +2127,11 @@ export const StockManagement: React.FC<StockManagementProps> = ({
 
               return (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-2">
-                  {filteredList.map(({ item, isBar, totalQty, isOut, suggestedQty, unitCost }) => (
+                  {filteredList.map((x) => (
                     <div
-                      key={item.id}
+                      key={x.id}
                       className={`p-4 rounded-xl border transition-all flex flex-col justify-between ${
-                        isOut
+                        x.isOut
                           ? 'bg-rose-950/30 border-rose-500/40 hover:border-rose-400'
                           : 'bg-slate-800/60 border-amber-500/30 hover:border-amber-400'
                       }`}
@@ -1825,43 +2139,43 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                       <div>
                         <div className="flex justify-between items-start gap-2 mb-2">
                           <div>
-                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</span>
-                            <h5 className="font-black text-sm text-white">{item.name}</h5>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{x.category}</span>
+                            <h5 className="font-black text-sm text-white">{x.name}</h5>
                           </div>
                           <span className={`px-2 py-0.5 rounded text-[10px] font-black ${
-                            isOut ? 'bg-rose-500 text-white animate-pulse' : 'bg-amber-500/30 text-amber-300 border border-amber-500/40'
+                            x.isOut ? 'bg-rose-500 text-white animate-pulse' : 'bg-amber-500/30 text-amber-300 border border-amber-500/40'
                           }`}>
-                            {isOut ? 'OUT OF STOCK (0)' : `LOW STOCK (${totalQty})`}
+                            {x.isOut ? 'OUT OF STOCK (0)' : `LOW STOCK (${x.totalQty})`}
                           </span>
                         </div>
 
                         <div className="text-xs space-y-1 mb-3 text-gray-300">
                           <div className="flex justify-between">
-                            <span className="text-gray-400">Department:</span>
-                            <span className="font-bold text-indigo-300">{isBar ? 'Main Beverage Store' : 'Kitchen'}</span>
+                            <span className="text-gray-400">Type / Dept:</span>
+                            <span className="font-bold text-indigo-300">{x.isIngredient ? 'Recipe Material' : (x.isBar ? 'Bar Beverage' : 'Kitchen Food')}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-gray-400">Suggested Order:</span>
-                            <span className="font-black text-amber-400">{suggestedQty} {item.unit || 'pcs'}</span>
+                            <span className="font-black text-amber-400">{x.suggestedQty} {x.unit}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-gray-400">Estimated Cost:</span>
-                            <span className="font-black text-white">{formatCurrency(suggestedQty * unitCost)}</span>
+                            <span className="font-black text-white">{formatCurrency(x.suggestedQty * x.unitCost)}</span>
                           </div>
                         </div>
                       </div>
 
                       <button
                         type="button"
-                        onClick={() => openPOModal(isBar ? 'Bar / Beverage' : 'Kitchen', item, suggestedQty)}
+                        onClick={() => openPOModal(x.isBar ? 'Bar / Beverage' : 'Kitchen', x.rawItem || x.rawIngredient, x.suggestedQty)}
                         className={`w-full py-2 rounded-lg font-black text-xs flex items-center justify-center space-x-1.5 shadow-md cursor-pointer transition-all ${
-                          isOut
+                          x.isOut
                             ? 'bg-rose-500 hover:bg-rose-400 text-white'
                             : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
                         }`}
                       >
                         <ShoppingCart className="w-3.5 h-3.5" />
-                        <span>Order Now ({suggestedQty} {item.unit || 'pcs'})</span>
+                        <span>Order Now ({x.suggestedQty} {x.unit})</span>
                       </button>
                     </div>
                   ))}
@@ -1954,6 +2268,14 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                                 </button>
                               </>
                             )}
+                            <button
+                              onClick={() => handlePrintSinglePO(po)}
+                              className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
+                              title="Print physical Goods Receiving Voucher with pen tick boxes"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span>Print Voucher</span>
+                            </button>
                             <button
                               onClick={() => openEditPOModal(po)}
                               className="px-2.5 py-1.5 rounded-lg bg-sky-600/80 hover:bg-sky-500 text-white font-bold text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
@@ -3695,9 +4017,21 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowEditPOModal(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-gray-100 dark:bg-gray-800 text-xs font-bold text-gray-700 dark:text-gray-300 cursor-pointer"
+                  className="px-3 py-2.5 rounded-xl bg-gray-100 dark:bg-gray-800 text-xs font-bold text-gray-700 dark:text-gray-300 cursor-pointer"
                 >
                   Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const po = purchaseOrders.find(p => p.id === editingPoId);
+                    if (po) handlePrintSinglePO(po);
+                  }}
+                  className="px-3.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center space-x-1 cursor-pointer transition-all"
+                  title="Print Goods Receiving Voucher with pen tick boxes"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print Voucher</span>
                 </button>
                 <button
                   type="submit"
@@ -3822,8 +4156,8 @@ export const StockManagement: React.FC<StockManagementProps> = ({
 
       {/* NEW PURCHASE ORDER / GOODS INTAKE MODAL */}
       {showPOModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className={`max-w-lg w-full rounded-2xl p-6 border shadow-2xl ${
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className={`max-w-2xl w-full rounded-2xl p-6 border shadow-2xl my-8 ${
             darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-gray-900'
           }`}>
             <div className="flex justify-between items-center mb-4 border-b border-gray-800 pb-3">
@@ -3832,6 +4166,7 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                 <h3 className="font-black text-base">Create Purchase Order / Intake Goods</h3>
               </div>
               <button
+                type="button"
                 onClick={() => setShowPOModal(false)}
                 className="text-gray-400 hover:text-white font-bold text-lg cursor-pointer"
               >
@@ -3840,7 +4175,8 @@ export const StockManagement: React.FC<StockManagementProps> = ({
             </div>
 
             <form onSubmit={handlePOSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              {/* Top Details: Supplier, Department, Payment Status */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 rounded-xl bg-slate-800/50 border border-slate-700/60">
                 <div>
                   <label className="block text-xs font-bold text-gray-400 mb-1">
                     Department
@@ -3850,14 +4186,10 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                     onChange={(e) => {
                       const dept = e.target.value as 'Bar / Beverage' | 'Kitchen';
                       setPoDepartment(dept);
-                      const items = menuItems.filter(m => dept === 'Kitchen' ? isKitchenItem(m) : isBarItem(m));
-                      if (items.length > 0) {
-                        setPoItemId(items[0].id);
-                      }
                       setPoDestination(dept === 'Kitchen' ? 'Kitchen Stock' : 'Main Beverage Stock');
                     }}
-                    className={`w-full p-2.5 rounded-xl border text-xs font-bold ${
-                      darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                    className={`w-full p-2 rounded-lg border text-xs font-bold ${
+                      darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
                     }`}
                   >
                     <option value="Bar / Beverage">Bar / Beverage</option>
@@ -3867,101 +4199,384 @@ export const StockManagement: React.FC<StockManagementProps> = ({
 
                 <div>
                   <label className="block text-xs font-bold text-gray-400 mb-1">
-                    Supplier Name
+                    Supplier Name *
                   </label>
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Bralirwa / City Wholesaler"
+                    placeholder="e.g. Bralirwa, City Market, Wholesale Meat"
                     value={poSupplier}
                     onChange={(e) => setPoSupplier(e.target.value)}
-                    className={`w-full p-2.5 rounded-xl border text-xs font-bold ${
-                      darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                    className={`w-full p-2 rounded-lg border text-xs font-bold ${
+                      darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
                     }`}
                   />
                 </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 mb-1">
+                    Payment Status
+                  </label>
+                  <select
+                    value={poPaymentStatus}
+                    onChange={(e) => setPoPaymentStatus(e.target.value as 'Paid' | 'Unpaid')}
+                    className={`w-full p-2 rounded-lg border text-xs font-bold ${
+                      darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                    }`}
+                  >
+                    <option value="Paid">✓ Paid</option>
+                    <option value="Unpaid">⚠️ Unpaid (Credit)</option>
+                  </select>
+                </div>
               </div>
 
+              {/* Add Item Section Box */}
+              <div className="p-4 rounded-xl bg-slate-800/80 border border-sky-500/30 space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-700">
+                  <span className="text-xs font-black text-sky-400 flex items-center gap-1.5">
+                    <Plus className="w-3.5 h-3.5" />
+                    Select & Add Items To Purchase Order
+                  </span>
+                  <span className="text-[10px] text-gray-400 font-medium">Beverages, Dishes, Recipe Raw Materials & Custom Items</span>
+                </div>
+
+                {/* Item Type Selector Tabs */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPoItemType('beverages');
+                      const bev = menuItems.find(m => isBarItem(m));
+                      if (bev) {
+                        setPoItemId(bev.id);
+                        setPoUnitCost(bev.costPrice || Math.round(bev.price * 0.6));
+                      }
+                    }}
+                    className={`py-1.5 px-2 rounded-lg border cursor-pointer text-[11px] font-bold text-center transition-all ${
+                      poItemType === 'beverages'
+                        ? 'bg-purple-600 border-purple-500 text-white shadow-md'
+                        : 'bg-slate-900/60 border-slate-700 text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    🥤 Beverages
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPoItemType('kitchen_dishes');
+                      const k = menuItems.find(m => isKitchenItem(m));
+                      if (k) {
+                        setPoItemId(k.id);
+                        setPoUnitCost(k.costPrice || Math.round(k.price * 0.6));
+                      }
+                    }}
+                    className={`py-1.5 px-2 rounded-lg border cursor-pointer text-[11px] font-bold text-center transition-all ${
+                      poItemType === 'kitchen_dishes'
+                        ? 'bg-orange-600 border-orange-500 text-white shadow-md'
+                        : 'bg-slate-900/60 border-slate-700 text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    🍳 Kitchen Dishes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPoItemType('recipe_ingredients');
+                      if (ingredients && ingredients.length > 0) {
+                        setPoItemId(ingredients[0].id);
+                        setPoUnitCost(ingredients[0].costPerUnit || 1000);
+                      }
+                    }}
+                    className={`py-1.5 px-2 rounded-lg border cursor-pointer text-[11px] font-bold text-center transition-all ${
+                      poItemType === 'recipe_ingredients'
+                        ? 'bg-emerald-600 border-emerald-500 text-white shadow-md'
+                        : 'bg-slate-900/60 border-slate-700 text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    🥬 Recipe Materials
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPoItemType('custom')}
+                    className={`py-1.5 px-2 rounded-lg border cursor-pointer text-[11px] font-bold text-center transition-all ${
+                      poItemType === 'custom'
+                        ? 'bg-sky-600 border-sky-500 text-white shadow-md'
+                        : 'bg-slate-900/60 border-slate-700 text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    ✏️ Custom Item
+                  </button>
+                </div>
+
+                {/* Item Selector / Fields */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  {poItemType === 'beverages' && (
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                        Select Beverage Product
+                      </label>
+                      <select
+                        value={poItemId}
+                        onChange={(e) => {
+                          setPoItemId(e.target.value);
+                          const it = menuItems.find(m => m.id === e.target.value);
+                          if (it) {
+                            setPoUnitCost(it.costPrice || Math.round(it.price * 0.6));
+                          }
+                        }}
+                        className={`w-full p-2 rounded-lg border text-xs font-bold ${
+                          darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                        }`}
+                      >
+                        {menuItems.filter(m => isBarItem(m)).map(item => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} ({item.category}) — Main Store: {item.mainStockQuantity || 0} | Bar: {item.stockQuantity || 0}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {poItemType === 'kitchen_dishes' && (
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                        Select Kitchen Menu Dish
+                      </label>
+                      <select
+                        value={poItemId}
+                        onChange={(e) => {
+                          setPoItemId(e.target.value);
+                          const it = menuItems.find(m => m.id === e.target.value);
+                          if (it) {
+                            setPoUnitCost(it.costPrice || Math.round(it.price * 0.6));
+                          }
+                        }}
+                        className={`w-full p-2 rounded-lg border text-xs font-bold ${
+                          darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                        }`}
+                      >
+                        {menuItems.filter(m => isKitchenItem(m)).map(item => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} ({item.category}) — Kitchen Stock: {item.stockQuantity || 0}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {poItemType === 'recipe_ingredients' && (
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                        Select Recipe Raw Ingredient (Meat, Oil, Rice, Flour, Veggies, etc.)
+                      </label>
+                      <select
+                        value={poItemId}
+                        onChange={(e) => {
+                          setPoItemId(e.target.value);
+                          const ing = ingredients.find(g => g.id === e.target.value);
+                          if (ing) {
+                            setPoUnitCost(ing.costPerUnit || 1000);
+                          }
+                        }}
+                        className={`w-full p-2 rounded-lg border text-xs font-bold ${
+                          darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                        }`}
+                      >
+                        {ingredients.map(ing => (
+                          <option key={ing.id} value={ing.id}>
+                            🥬 {ing.name} ({ing.unit || 'Kg'}) — Stock: {ing.stockQuantity || 0} {ing.unit || 'Kg'} | Cost: {formatCurrency(ing.costPerUnit || 0)}/{ing.unit || 'Kg'}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {poItemType === 'custom' && (
+                    <>
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                          Custom Item Name *
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Fresh Tomatoes, Cooking Gas, Napkins"
+                          value={poCustomItemName}
+                          onChange={(e) => setPoCustomItemName(e.target.value)}
+                          className={`w-full p-2 rounded-lg border text-xs font-bold ${
+                            darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                          }`}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                            Category
+                          </label>
+                          <input
+                            type="text"
+                            value={poCustomCategory}
+                            onChange={(e) => setPoCustomCategory(e.target.value)}
+                            className={`w-full p-2 rounded-lg border text-xs font-bold ${
+                              darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                            }`}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                            Unit
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="Kg / Litres / Boxes"
+                            value={poCustomUnit}
+                            onChange={(e) => setPoCustomUnit(e.target.value)}
+                            className={`w-full p-2 rounded-lg border text-xs font-bold ${
+                              darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                            }`}
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Quantity, Cost, Destination Row */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                      Quantity Purchased
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={poQuantity}
+                      onChange={(e) => setPoQuantity(parseInt(e.target.value) || 1)}
+                      className={`w-full p-2 rounded-lg border text-xs font-bold ${
+                        darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                      }`}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                      Unit Cost (RWF)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={poUnitCost}
+                      onChange={(e) => setPoUnitCost(parseInt(e.target.value) || 0)}
+                      className={`w-full p-2 rounded-lg border text-xs font-bold ${
+                        darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                      }`}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                      Stock Destination
+                    </label>
+                    <select
+                      value={poItemType === 'beverages' ? poDestination : 'Kitchen Stock'}
+                      disabled={poItemType !== 'beverages'}
+                      onChange={(e) => setPoDestination(e.target.value as any)}
+                      className={`w-full p-2 rounded-lg border text-xs font-bold ${
+                        darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                      }`}
+                    >
+                      <option value="Main Beverage Stock">Main Beverage Store (Warehouse)</option>
+                      <option value="Bar Stock">Bar Shelf (Direct Selling Stock)</option>
+                      <option value="Kitchen Stock">Kitchen Stock (Pantry / Store)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={handleAddDraftItem}
+                    className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-black text-xs flex items-center space-x-1.5 shadow-md cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Add Item To Purchase Order</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Draft Items Table */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center text-xs font-bold text-gray-300">
+                  <span>Order Draft Items ({poDraftItems.length})</span>
+                  {poDraftItems.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPoDraftItems([])}
+                      className="text-[10px] text-rose-400 hover:underline cursor-pointer"
+                    >
+                      Clear All Items
+                    </button>
+                  )}
+                </div>
+
+                {poDraftItems.length === 0 ? (
+                  <div className="p-4 text-center rounded-xl bg-slate-800/40 border border-slate-700/60 text-xs text-gray-400">
+                    No items added to draft yet. Fill the box above and click <strong className="text-sky-400">+ Add Item To Purchase Order</strong>.
+                  </div>
+                ) : (
+                  <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-700/60 divide-y divide-slate-800">
+                    {poDraftItems.map((item, idx) => (
+                      <div key={idx} className="p-2.5 bg-slate-800/60 flex items-center justify-between gap-2 text-xs">
+                        <div className="flex-1">
+                          <div className="font-bold text-white">{item.itemName}</div>
+                          <div className="text-[10px] text-gray-400 flex items-center gap-2">
+                            <span>Category: {item.category}</span>
+                            <span>•</span>
+                            <span className="text-sky-300">Dest: {item.destination}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-3 text-right">
+                          <div>
+                            <div className="font-black text-white">{item.quantity} × {formatCurrency(item.unitCost)}</div>
+                            <div className="text-[10px] font-bold text-emerald-400">{formatCurrency(item.totalCost)}</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setPoDraftItems(poDraftItems.filter((_, i) => i !== idx))}
+                            className="p-1 rounded text-rose-400 hover:bg-rose-500/20 cursor-pointer"
+                            title="Remove item"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Total Order Summary Box */}
+              <div className="p-3 rounded-xl bg-sky-500/10 border border-sky-500/20 text-xs flex justify-between items-center text-sky-300 font-bold">
+                <span>Grand Total Purchase Order Amount:</span>
+                <span className="text-lg font-black text-white">
+                  {formatCurrency(poDraftItems.reduce((acc, i) => acc + i.totalCost, 0))}
+                </span>
+              </div>
+
+              {/* Order Notes / Receipt Ref */}
               <div>
                 <label className="block text-xs font-bold text-gray-400 mb-1">
-                  Select Item to Purchase
+                  Order Notes / Invoice / Receipt Reference
                 </label>
-                <select
-                  value={poItemId}
-                  onChange={(e) => {
-                    setPoItemId(e.target.value);
-                    const it = menuItems.find(m => m.id === e.target.value);
-                    if (it) {
-                      setPoUnitCost(it.costPrice || Math.round(it.price * 0.6));
-                    }
-                  }}
+                <input
+                  type="text"
+                  value={poNotes}
+                  onChange={(e) => setPoNotes(e.target.value)}
+                  placeholder="e.g. Invoice #9021, Paid via MoMo / Cash"
                   className={`w-full p-2.5 rounded-xl border text-xs font-bold ${
                     darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
                   }`}
-                >
-                  {menuItems.filter(m => poDepartment === 'Kitchen' ? isKitchenItem(m) : isBarItem(m)).map(item => (
-                    <option key={item.id} value={item.id}>
-                      {item.name} ({item.category})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {poDepartment === 'Bar / Beverage' && (
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 mb-1">
-                    Stock Destination
-                  </label>
-                  <select
-                    value={poDestination}
-                    onChange={(e) => setPoDestination(e.target.value as any)}
-                    className={`w-full p-2.5 rounded-xl border text-xs font-bold ${
-                      darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
-                    }`}
-                  >
-                    <option value="Main Beverage Stock">Main Beverage Stock (Store / Warehouse)</option>
-                    <option value="Bar Stock">Direct to Bar Stock (Selling Shelf)</option>
-                  </select>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 mb-1">
-                    Quantity Purchased
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={poQuantity}
-                    onChange={(e) => setPoQuantity(parseInt(e.target.value) || 0)}
-                    className={`w-full p-2.5 rounded-xl border text-sm font-bold ${
-                      darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
-                    }`}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 mb-1">
-                    Unit Purchase Price (RWF)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={poUnitCost}
-                    onChange={(e) => setPoUnitCost(parseInt(e.target.value) || 0)}
-                    className={`w-full p-2.5 rounded-xl border text-sm font-bold ${
-                      darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
-                    }`}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-sky-500/10 border border-sky-500/20 text-xs flex justify-between items-center text-sky-300 font-bold">
-                <span>Total Purchase Amount:</span>
-                <span className="text-base font-black text-white">{formatCurrency(poQuantity * poUnitCost)}</span>
+                />
               </div>
 
               <div className="flex items-center justify-between pt-1">
@@ -3986,9 +4601,10 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-black text-xs shadow-lg shadow-sky-500/20 cursor-pointer"
+                  className="flex-1 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-black text-xs shadow-lg shadow-sky-500/20 cursor-pointer flex items-center justify-center space-x-1"
                 >
-                  Save Purchase Order
+                  <Check className="w-4 h-4" />
+                  <span>Save Purchase Order</span>
                 </button>
               </div>
             </form>

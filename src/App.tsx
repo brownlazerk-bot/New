@@ -1404,7 +1404,7 @@ export default function App() {
     return newPO;
   };
 
-  // Receive / Accept Purchase Order (Auto Stock Gain)
+  // Receive / Accept Purchase Order (Auto Stock Gain for Beverages, Kitchen Dishes & Recipe Ingredients)
   const handleReceivePurchaseOrder = (poId: string) => {
     const targetPo = purchaseOrders.find(p => p.id === poId);
     if (!targetPo) return;
@@ -1414,79 +1414,166 @@ export default function App() {
     }
 
     let updatedMenuItems = [...menuItems];
+    let updatedIngredients = loadIngredients();
     let newLogs: StockAdjustmentLog[] = [...stockLogs];
+    let newMovements: StockMovementRecord[] = loadStockMovementRecords();
 
     targetPo.items.forEach(poItem => {
-      const idx = updatedMenuItems.findIndex(m => m.id === poItem.itemId);
-      if (idx > -1) {
-        const item = updatedMenuItems[idx];
-        const qty = poItem.quantity;
+      // Check if item matches a Kitchen Raw Ingredient
+      const ingIdx = updatedIngredients.findIndex(g => 
+        g.id === poItem.itemId || 
+        g.name.toLowerCase() === poItem.itemName.toLowerCase() ||
+        poItem.itemId.startsWith('ing-')
+      );
 
-        if (poItem.destination === 'Main Beverage Stock') {
-          const prevMain = item.mainStockQuantity || 0;
-          const newMain = prevMain + qty;
-          updatedMenuItems[idx] = {
-            ...item,
-            mainStockQuantity: newMain
+      if (ingIdx > -1) {
+        const ing = updatedIngredients[ingIdx];
+        const prevStock = ing.stockQuantity || 0;
+        const newStock = prevStock + poItem.quantity;
+        updatedIngredients[ingIdx] = {
+          ...ing,
+          stockQuantity: newStock,
+          costPerUnit: poItem.unitCost > 0 ? poItem.unitCost : ing.costPerUnit
+        };
+
+        newMovements.unshift({
+          id: `mvt-po-${Date.now()}-${poItem.itemId}`,
+          referenceNumber: targetPo.poNumber || targetPo.id,
+          ingredientId: ing.id,
+          ingredientName: ing.name,
+          department: 'Kitchen',
+          movementType: 'IN_PURCHASE',
+          quantity: poItem.quantity,
+          unit: ing.unit || 'units',
+          unitCost: poItem.unitCost,
+          totalValue: poItem.quantity * poItem.unitCost,
+          sourceDestination: targetPo.supplierName,
+          performedBy: targetPo.receivedByName || currentUser?.fullName || 'Storekeeper',
+          notes: `PO #${targetPo.poNumber} Intake for Kitchen Recipe Ingredient`,
+          timestamp: new Date().toISOString()
+        });
+
+        newLogs.unshift({
+          id: `log-po-ing-${Date.now()}-${poItem.itemId}`,
+          itemId: ing.id,
+          itemName: ing.name,
+          type: 'Purchase',
+          quantityChange: poItem.quantity,
+          previousStock: prevStock,
+          newStock: newStock,
+          sourceLocation: 'Supplier',
+          targetLocation: 'Kitchen Stock',
+          reason: `Kitchen Raw Ingredient Intake (PO #${targetPo.poNumber} - ${targetPo.supplierName})`,
+          timestamp: new Date().toISOString(),
+          actor: targetPo.receivedByName || currentUser?.fullName || 'Storekeeper'
+        });
+      } else {
+        // Check if item matches a Menu Item (Beverage or Dish)
+        const menuIdx = updatedMenuItems.findIndex(m => 
+          m.id === poItem.itemId || 
+          m.name.toLowerCase() === poItem.itemName.toLowerCase()
+        );
+
+        if (menuIdx > -1) {
+          const item = updatedMenuItems[menuIdx];
+          const qty = poItem.quantity;
+
+          if (poItem.destination === 'Main Beverage Stock') {
+            const prevMain = item.mainStockQuantity || 0;
+            const newMain = prevMain + qty;
+            updatedMenuItems[menuIdx] = {
+              ...item,
+              mainStockQuantity: newMain
+            };
+            newLogs.unshift({
+              id: `log-po-${Date.now()}-${poItem.itemId}`,
+              itemId: item.id,
+              itemName: item.name,
+              type: 'Purchase',
+              quantityChange: qty,
+              previousStock: prevMain,
+              newStock: newMain,
+              sourceLocation: 'Supplier',
+              targetLocation: 'Main Beverage Stock',
+              reason: `Purchased to Main Beverage Stock (PO #${targetPo.poNumber} - ${targetPo.supplierName})`,
+              timestamp: new Date().toISOString(),
+              actor: targetPo.receivedByName || currentUser?.fullName || 'Storekeeper'
+            });
+          } else if (poItem.destination === 'Bar Stock') {
+            const prevBar = item.stockQuantity || 0;
+            const newBar = prevBar + qty;
+            updatedMenuItems[menuIdx] = {
+              ...item,
+              stockQuantity: newBar,
+              status: newBar > 0 ? 'Available' : 'Out of Stock'
+            };
+            newLogs.unshift({
+              id: `log-po-${Date.now()}-${poItem.itemId}`,
+              itemId: item.id,
+              itemName: item.name,
+              type: 'Purchase',
+              quantityChange: qty,
+              previousStock: prevBar,
+              newStock: newBar,
+              sourceLocation: 'Supplier',
+              targetLocation: 'Bar Stock',
+              reason: `Purchased direct to Bar Stock (PO #${targetPo.poNumber} - ${targetPo.supplierName})`,
+              timestamp: new Date().toISOString(),
+              actor: targetPo.receivedByName || currentUser?.fullName || 'Storekeeper'
+            });
+          } else {
+            // Kitchen Stock
+            const prevKitchen = item.stockQuantity || 0;
+            const newKitchen = prevKitchen + qty;
+            updatedMenuItems[menuIdx] = {
+              ...item,
+              stockQuantity: newKitchen,
+              status: newKitchen > 0 ? 'Available' : 'Out of Stock'
+            };
+            newLogs.unshift({
+              id: `log-po-${Date.now()}-${poItem.itemId}`,
+              itemId: item.id,
+              itemName: item.name,
+              type: 'Purchase',
+              quantityChange: qty,
+              previousStock: prevKitchen,
+              newStock: newKitchen,
+              sourceLocation: 'Supplier',
+              targetLocation: 'Kitchen Stock',
+              reason: `Purchased to Kitchen Stock (PO #${targetPo.poNumber} - ${targetPo.supplierName})`,
+              timestamp: new Date().toISOString(),
+              actor: targetPo.receivedByName || currentUser?.fullName || 'Storekeeper'
+            });
+          }
+        } else if (poItem.destination === 'Kitchen Stock' || targetPo.department === 'Kitchen') {
+          // Custom / Raw Kitchen material purchase -> create/register ingredient
+          const newIng: KitchenIngredient = {
+            id: poItem.itemId && poItem.itemId !== 'custom' ? poItem.itemId : `ing-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            name: poItem.itemName,
+            category: 'Other / Dry Goods',
+            stockQuantity: poItem.quantity,
+            unit: 'units',
+            costPerUnit: poItem.unitCost,
+            minStockAlert: 5,
+            storageLocation: 'Kitchen Pantry'
           };
-          newLogs.unshift({
-            id: `log-po-${Date.now()}-${poItem.itemId}`,
-            itemId: item.id,
-            itemName: item.name,
-            type: 'Purchase',
-            quantityChange: qty,
-            previousStock: prevMain,
-            newStock: newMain,
-            sourceLocation: 'Supplier',
-            targetLocation: 'Main Beverage Stock',
-            reason: `Purchased to Main Beverage Stock (PO #${targetPo.poNumber} - ${targetPo.supplierName})`,
-            timestamp: new Date().toISOString(),
-            actor: targetPo.receivedByName || currentUser?.fullName || 'Storekeeper'
-          });
-        } else if (poItem.destination === 'Bar Stock') {
-          const prevBar = item.stockQuantity || 0;
-          const newBar = prevBar + qty;
-          updatedMenuItems[idx] = {
-            ...item,
-            stockQuantity: newBar,
-            status: newBar > 0 ? 'Available' : 'Out of Stock'
-          };
-          newLogs.unshift({
-            id: `log-po-${Date.now()}-${poItem.itemId}`,
-            itemId: item.id,
-            itemName: item.name,
-            type: 'Purchase',
-            quantityChange: qty,
-            previousStock: prevBar,
-            newStock: newBar,
-            sourceLocation: 'Supplier',
-            targetLocation: 'Bar Stock',
-            reason: `Purchased direct to Bar Stock (PO #${targetPo.poNumber} - ${targetPo.supplierName})`,
-            timestamp: new Date().toISOString(),
-            actor: targetPo.receivedByName || currentUser?.fullName || 'Storekeeper'
-          });
-        } else {
-          // Kitchen Stock
-          const prevKitchen = item.stockQuantity || 0;
-          const newKitchen = prevKitchen + qty;
-          updatedMenuItems[idx] = {
-            ...item,
-            stockQuantity: newKitchen,
-            status: newKitchen > 0 ? 'Available' : 'Out of Stock'
-          };
-          newLogs.unshift({
-            id: `log-po-${Date.now()}-${poItem.itemId}`,
-            itemId: item.id,
-            itemName: item.name,
-            type: 'Purchase',
-            quantityChange: qty,
-            previousStock: prevKitchen,
-            newStock: newKitchen,
-            sourceLocation: 'Supplier',
-            targetLocation: 'Kitchen Stock',
-            reason: `Purchased to Kitchen Stock (PO #${targetPo.poNumber} - ${targetPo.supplierName})`,
-            timestamp: new Date().toISOString(),
-            actor: targetPo.receivedByName || currentUser?.fullName || 'Storekeeper'
+          updatedIngredients.push(newIng);
+
+          newMovements.unshift({
+            id: `mvt-po-${Date.now()}-${poItem.itemId}`,
+            referenceNumber: targetPo.poNumber || targetPo.id,
+            ingredientId: newIng.id,
+            ingredientName: newIng.name,
+            department: 'Kitchen',
+            movementType: 'IN_PURCHASE',
+            quantity: poItem.quantity,
+            unit: newIng.unit,
+            unitCost: poItem.unitCost,
+            totalValue: poItem.quantity * poItem.unitCost,
+            sourceDestination: targetPo.supplierName,
+            performedBy: targetPo.receivedByName || currentUser?.fullName || 'Storekeeper',
+            notes: `New Kitchen Item Intake via PO #${targetPo.poNumber}`,
+            timestamp: new Date().toISOString()
           });
         }
       }
@@ -1506,6 +1593,8 @@ export default function App() {
 
     setPurchaseOrders(updatedPOs);
     savePurchaseOrders(updatedPOs);
+    updateIngredientsState(updatedIngredients);
+    saveStockMovementRecords(newMovements);
     updateMenuItemsState(updatedMenuItems);
     updateStockLogsState(newLogs);
 
