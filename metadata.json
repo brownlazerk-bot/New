@@ -1,0 +1,6 @@
+{
+  "name": "Hotel Resort Bar & Cashier POS",
+  "description": "Complete Bar & Cashier POS system with fast order terminal, table grid, Kitchen Order Tickets (Bon de Commande), room/apartment charging, pool & sauna ticketing, inventory stock control, shift register, and automated daily financial reports with PDF/Excel export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
