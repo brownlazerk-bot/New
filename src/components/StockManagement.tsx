@@ -6,7 +6,7 @@ import {
   Calendar, Download, ArrowRight, Printer, CheckSquare, Square, Utensils, Wine, Filter, Check,
   ArrowRightLeft, Store, Boxes, Truck, ArrowDownToLine, Building2, Sparkles, Lightbulb, ShoppingCart
 } from 'lucide-react';
-import { MenuItem, StockAdjustmentLog, Order, Table, Waiter, AppUser, PurchaseOrder, PurchaseOrderItem, KitchenIngredient, RecipeIngredient, StockMovementRecord, KitchenWasteRecord } from '../types';
+import { MenuItem, StockAdjustmentLog, Order, Table, Waiter, AppUser, PurchaseOrder, PurchaseOrderItem, KitchenIngredient, RecipeIngredient, StockMovementRecord, KitchenWasteRecord, Category } from '../types';
 import { formatCurrency } from '../lib/currency';
 import { calculateStockMovementsForDate, ItemStockMovement } from '../lib/stockMovement';
 import { printReportHTML } from '../lib/exporter';
@@ -136,6 +136,71 @@ export const StockManagement: React.FC<StockManagementProps> = ({
 
   // PO Filter Tab: 'pending' (Ordered / Not Yet Received), 'received' (History), 'all'
   const [poTabFilter, setPoTabFilter] = useState<'pending' | 'received' | 'all'>('pending');
+
+  // PO View Layout Mode: 'voucher' (GRN Document Format with direct inline editing) or 'table' (Compact summary)
+  const [poViewLayout, setPoViewLayout] = useState<'voucher' | 'table'>('voucher');
+
+  const handleInlineUpdatePOItem = (po: PurchaseOrder, itemIdx: number, field: string, value: any) => {
+    if (!onEditPurchaseOrder) return;
+    const newItems = po.items.map((it, idx) => {
+      if (idx !== itemIdx) return it;
+      const updated = { ...it, [field]: value };
+      if (field === 'quantity' || field === 'unitCost') {
+        updated.totalCost = (updated.quantity || 0) * (updated.unitCost || 0);
+      }
+      if (field === 'receivedQuantity') {
+        updated.received = (updated.receivedQuantity || 0) > 0;
+      }
+      return updated;
+    });
+    const newTotal = newItems.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitCost || 0)), 0);
+    onEditPurchaseOrder(po.id, { items: newItems, totalAmount: newTotal });
+  };
+
+  const handleInlineToggleItemTick = (po: PurchaseOrder, itemIdx: number) => {
+    if (!onEditPurchaseOrder) return;
+    const newItems = po.items.map((it, idx) => {
+      if (idx !== itemIdx) return it;
+      const isNowReceived = !it.received;
+      const recQty = isNowReceived ? it.quantity : 0;
+      return {
+        ...it,
+        received: isNowReceived,
+        receivedQuantity: recQty
+      };
+    });
+    const newTotal = newItems.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitCost || 0)), 0);
+    onEditPurchaseOrder(po.id, { items: newItems, totalAmount: newTotal });
+  };
+
+  const handleInlineAddItem = (po: PurchaseOrder) => {
+    if (!onEditPurchaseOrder) return;
+    const newItem: PurchaseOrderItem = {
+      itemId: 'item-' + Date.now(),
+      itemName: 'New Item',
+      category: (po.department === 'Kitchen' ? 'Food' : 'Beers') as Category,
+      quantity: 1,
+      unitCost: 0,
+      totalCost: 0,
+      destination: po.department === 'Kitchen' ? 'Kitchen Stock' : 'Main Beverage Stock',
+      receivedQuantity: 0,
+      received: false
+    };
+    const newItems = [...po.items, newItem];
+    const newTotal = newItems.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitCost || 0)), 0);
+    onEditPurchaseOrder(po.id, { items: newItems, totalAmount: newTotal });
+  };
+
+  const handleInlineDeleteItem = (po: PurchaseOrder, itemIdx: number) => {
+    if (!onEditPurchaseOrder) return;
+    if (po.items.length <= 1) {
+      alert('A purchase order must contain at least one item!');
+      return;
+    }
+    const newItems = po.items.filter((_, idx) => idx !== itemIdx);
+    const newTotal = newItems.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitCost || 0)), 0);
+    onEditPurchaseOrder(po.id, { items: newItems, totalAmount: newTotal });
+  };
 
   // Accept & Receive Goods Modal State (Itemized Checkboxes & Received Quantities)
   const [showReceiveModal, setShowReceiveModal] = useState<boolean>(false);
@@ -668,7 +733,9 @@ export const StockManagement: React.FC<StockManagementProps> = ({
     setReceivingReceiverName(loggedInUser?.fullName || 'Storekeeper');
     setReceivingNotes(po.notes || '');
     setReceivingItems(po.items.map(it => {
-      const prevRec = it.receivedQuantity || 0;
+      const prevRec = it.receivedQuantity !== undefined
+        ? it.receivedQuantity
+        : (po.status === 'Received' || it.received ? it.quantity : 0);
       const remainingQty = Math.max(0, it.quantity - prevRec);
       return {
         itemId: it.itemId,
@@ -2433,224 +2500,584 @@ export const StockManagement: React.FC<StockManagementProps> = ({
           <div className={`p-5 rounded-2xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} space-y-4`}>
             {/* Sub-Tab Filter Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-gray-200 dark:border-gray-800">
-              <div className="flex items-center space-x-1.5 bg-gray-100 dark:bg-slate-800/80 p-1 rounded-xl border border-gray-200 dark:border-slate-700/60">
-                <button
-                  type="button"
-                  onClick={() => setPoTabFilter('pending')}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 ${
-                    poTabFilter === 'pending'
-                      ? 'bg-amber-500 text-slate-950 shadow-md'
-                      : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>⏳ Ordered (Pending Intake)</span>
-                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/20 font-bold">
-                    {purchaseOrders.filter(p => p.status === 'Pending' || p.status === 'Partially Received').length}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPoTabFilter('received')}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 ${
-                    poTabFilter === 'received'
-                      ? 'bg-emerald-500 text-slate-950 shadow-md'
-                      : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>✓ Received Goods (History)</span>
-                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/20 font-bold">
-                    {purchaseOrders.filter(p => p.status === 'Received').length}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPoTabFilter('all')}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 ${
-                    poTabFilter === 'all'
-                      ? 'bg-indigo-600 text-white shadow-md'
-                      : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  <span>📋 All Orders</span>
-                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/20 font-bold">
-                    {purchaseOrders.length}
-                  </span>
-                </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center space-x-1 bg-gray-100 dark:bg-slate-800/80 p-1 rounded-xl border border-gray-200 dark:border-slate-700/60">
+                  <button
+                    type="button"
+                    onClick={() => setPoTabFilter('pending')}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 ${
+                      poTabFilter === 'pending'
+                        ? 'bg-amber-500 text-slate-950 shadow-md'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>⏳ Ordered (Pending Intake)</span>
+                    <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/20 font-bold">
+                      {purchaseOrders.filter(p => p.status === 'Pending' || p.status === 'Partially Received').length}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPoTabFilter('received')}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 ${
+                      poTabFilter === 'received'
+                        ? 'bg-emerald-500 text-slate-950 shadow-md'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>✓ Received Goods (History)</span>
+                    <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/20 font-bold">
+                      {purchaseOrders.filter(p => p.status === 'Received').length}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPoTabFilter('all')}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 ${
+                      poTabFilter === 'all'
+                        ? 'bg-indigo-600 text-white shadow-md'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>📋 All Orders</span>
+                    <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/20 font-bold">
+                      {purchaseOrders.length}
+                    </span>
+                  </button>
+                </div>
+
+                {/* View Layout Selector */}
+                <div className="flex items-center space-x-1 bg-gray-100 dark:bg-slate-800/80 p-1 rounded-xl border border-gray-200 dark:border-slate-700/60">
+                  <button
+                    type="button"
+                    onClick={() => setPoViewLayout('voucher')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 ${
+                      poViewLayout === 'voucher'
+                        ? 'bg-emerald-600 text-white shadow-md'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                    title="Official GRN Voucher Document Format matching print template"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>📄 GRN Voucher View</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPoViewLayout('table')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 ${
+                      poViewLayout === 'table'
+                        ? 'bg-indigo-600 text-white shadow-md'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                    title="Compact Summary Table View"
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>📊 Compact Table</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="text-xs text-gray-400 font-medium">
-                {poTabFilter === 'pending' && 'Displaying pending supplier deliveries awaiting physical intake.'}
+              <div className="text-xs text-gray-400 font-medium italic">
+                {poTabFilter === 'pending' && 'Displaying pending supplier deliveries awaiting physical intake in GRN voucher format.'}
                 {poTabFilter === 'received' && 'Displaying fully received and accepted purchase orders.'}
                 {poTabFilter === 'all' && 'Displaying total purchase orders history.'}
               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b border-gray-200 dark:border-gray-800 text-gray-400 font-bold uppercase text-[10px]">
-                    <th className="py-3 px-3">PO Number & Date</th>
-                    <th className="py-3 px-3">Supplier</th>
-                    <th className="py-3 px-3">Department</th>
-                    <th className="py-3 px-3">Purchased Items</th>
-                    <th className="py-3 px-3">Destination</th>
-                    <th className="py-3 px-3">Total Amount</th>
-                    <th className="py-3 px-3">Fulfillment Status</th>
-                    <th className="py-3 px-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {(() => {
-                    const filteredPOs = purchaseOrders.filter(po => {
-                      if (poTabFilter === 'pending') return po.status === 'Pending' || po.status === 'Partially Received';
-                      if (poTabFilter === 'received') return po.status === 'Received';
-                      return true;
-                    });
+            {(() => {
+              const filteredPOs = purchaseOrders.filter(po => {
+                if (poTabFilter === 'pending') return po.status === 'Pending' || po.status === 'Partially Received';
+                if (poTabFilter === 'received') return po.status === 'Received';
+                return true;
+              });
 
-                    if (filteredPOs.length === 0) {
+              if (filteredPOs.length === 0) {
+                return (
+                  <div className="py-12 text-center text-gray-400 font-medium bg-gray-50 dark:bg-slate-950/40 rounded-2xl border border-dashed border-gray-300 dark:border-slate-800">
+                    {poTabFilter === 'pending'
+                      ? '✓ All ordered items have been received! No pending deliveries waiting for intake.'
+                      : poTabFilter === 'received'
+                      ? 'No received goods records found in history yet.'
+                      : 'No purchase orders recorded yet. Click "+ New Purchase Order" to create one.'}
+                  </div>
+                );
+              }
+
+              {/* VOUCHER DOCUMENT LAYOUT MODE */}
+              if (poViewLayout === 'voucher') {
+                return (
+                  <div className="space-y-6">
+                    {filteredPOs.map(po => {
+                      const isFullyReceived = po.status === 'Received';
+                      const totalOrderedUnits = po.items.reduce((acc, it) => acc + (it.quantity || 0), 0);
+                      const totalReceivedUnits = po.items.reduce((acc, it) => {
+                        const rec = isFullyReceived ? (it.receivedQuantity !== undefined ? it.receivedQuantity : it.quantity) : (it.receivedQuantity !== undefined ? it.receivedQuantity : (it.received ? it.quantity : 0));
+                        return acc + rec;
+                      }, 0);
+                      const totalReceivedValuation = po.items.reduce((acc, it) => {
+                        const rec = isFullyReceived ? (it.receivedQuantity !== undefined ? it.receivedQuantity : it.quantity) : (it.receivedQuantity !== undefined ? it.receivedQuantity : (it.received ? it.quantity : 0));
+                        return acc + (rec * (it.unitCost || 0));
+                      }, 0);
+
                       return (
-                        <tr>
-                          <td colSpan={8} className="py-8 text-center text-gray-400 font-medium">
-                            {poTabFilter === 'pending'
-                              ? '✓ All ordered items have been received! No pending deliveries waiting for intake.'
-                              : poTabFilter === 'received'
-                              ? 'No received goods records found in history yet.'
-                              : 'No purchase orders recorded yet. Click "+ New Purchase Order" to create one.'}
-                          </td>
-                        </tr>
-                      );
-                    }
+                        <div key={po.id} className="border-2 border-emerald-600/40 dark:border-emerald-500/30 bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-xl transition-all">
+                          {/* GRN Voucher Header Banner */}
+                          <div className="bg-emerald-950 border-b border-emerald-800 p-4 text-white flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <div className="text-[11px] font-black tracking-widest text-emerald-400 uppercase">SEVEN TO SEVEN | SKY VIEW RESORT</div>
+                              <h3 className="text-base font-black text-white flex items-center gap-2">
+                                <span>OFFICIAL GOODS RECEIVED NOTE (GRN) & PURCHASE VOUCHER</span>
+                                <span className="text-xs px-2 py-0.5 rounded-full font-mono bg-emerald-800/80 text-emerald-200 border border-emerald-500/30">
+                                  #{po.poNumber}
+                                </span>
+                              </h3>
+                            </div>
 
-                    return filteredPOs.map(po => (
-                      <tr key={po.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-                        <td className="py-3 px-3 font-bold text-gray-900 dark:text-white">
-                          <div className="text-sky-400">{po.poNumber}</div>
-                          <div className="text-[10px] text-gray-400">{po.date}</div>
-                        </td>
-                        <td className="py-3 px-3 font-bold text-white">{po.supplierName}</td>
-                        <td className="py-3 px-3 font-medium text-gray-300">{po.department}</td>
-                        <td className="py-3 px-3 space-y-0.5">
-                          {po.items.map((it, idx) => {
-                            const recQty = it.receivedQuantity !== undefined ? it.receivedQuantity : (it.received ? it.quantity : 0);
-                            return (
-                              <div key={idx} className="font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
-                                <span>• {it.itemName} ({it.quantity} ordered @ {formatCurrency(it.unitCost)})</span>
-                                {po.status !== 'Pending' && (
-                                  <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${recQty >= it.quantity ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
-                                    Rec'd: {recQty}/{it.quantity}
-                                  </span>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </td>
-                        <td className="py-3 px-3 font-bold text-indigo-400">
-                          {po.items[0]?.destination || 'Store'}
-                        </td>
-                        <td className="py-3 px-3 font-black text-gray-900 dark:text-white">
-                          {formatCurrency(po.totalAmount)}
-                        </td>
-                        <td className="py-3 px-3">
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-black ${
-                            po.status === 'Received'
-                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                              : po.status === 'Partially Received'
-                              ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
-                              : po.status === 'Cancelled'
-                              ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                              : 'bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse'
-                          }`}>
-                            {po.status === 'Received'
-                              ? '✓ Received (In Stock)'
-                              : po.status === 'Partially Received'
-                              ? '⚡ Partially Received'
-                              : po.status === 'Cancelled'
-                              ? '🚫 Cancelled'
-                              : '⏳ Ordered (Pending Intake)'}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3 text-right">
-                          <div className="flex justify-end items-center gap-1.5 flex-wrap">
-                            {(po.status === 'Pending' || po.status === 'Partially Received') && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              {(po.status === 'Pending' || po.status === 'Partially Received') && (
+                                <button
+                                  type="button"
+                                  onClick={() => openReceiveModal(po)}
+                                  className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs inline-flex items-center space-x-1.5 shadow-lg transition-all cursor-pointer"
+                                  title="Commit physical intake into inventory"
+                                >
+                                  <CheckCircle2 className="w-4 h-4" />
+                                  <span>Accept & Intake into Stock</span>
+                                </button>
+                              )}
+
                               <button
-                                onClick={() => openReceiveModal(po)}
-                                className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[11px] inline-flex items-center space-x-1 shadow-md transition-all cursor-pointer"
-                                title="Accept & receive products with tickboxes"
+                                type="button"
+                                onClick={() => handlePrintLPO(po)}
+                                className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs inline-flex items-center space-x-1.5 shadow transition-all cursor-pointer"
+                                title="Print Local Purchase Order (LPO)"
                               >
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                <span>Accept & Receive</span>
+                                <Printer className="w-3.5 h-3.5" />
+                                <span>Print LPO</span>
                               </button>
-                            )}
 
-                            {/* LPO / Order Print button */}
-                            <button
-                              onClick={() => handlePrintLPO(po)}
-                              className="px-2.5 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-500 text-white font-bold text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
-                              title="Print Local Purchase Order (LPO) / Order Requisition"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                              <span>Print LPO</span>
-                            </button>
-
-                            {/* Goods Received Note (GRN) button */}
-                            <button
-                              onClick={() => handlePrintGoodsReceivedNote(po)}
-                              className={`px-2.5 py-1.5 rounded-lg font-bold text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer ${
-                                po.status === 'Received' || po.status === 'Partially Received'
-                                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                                  : 'bg-gray-700/60 hover:bg-gray-700 text-gray-300 border border-gray-600'
-                              }`}
-                              title={po.status === 'Pending' ? "Cannot print GRN until order is received into stock" : "Print Official Goods Received Note (GRN)"}
-                            >
-                              <FileText className="w-3.5 h-3.5" />
-                              <span>Print GRN</span>
-                            </button>
-
-                            <button
-                              onClick={() => openEditPOModal(po)}
-                              className="px-2.5 py-1.5 rounded-lg bg-sky-600/80 hover:bg-sky-500 text-white font-bold text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
-                              title="Edit purchase order details"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                              <span>Edit</span>
-                            </button>
-
-                            {po.status === 'Pending' && (
                               <button
+                                type="button"
+                                onClick={() => handlePrintGoodsReceivedNote(po)}
+                                className={`px-3 py-1.5 rounded-xl font-bold text-xs inline-flex items-center space-x-1.5 shadow transition-all cursor-pointer ${
+                                  po.status === 'Received' || po.status === 'Partially Received'
+                                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                    : 'bg-slate-800 hover:bg-slate-700 text-gray-300 border border-slate-700'
+                                }`}
+                                title="Print Official Goods Received Note (GRN)"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                <span>Print GRN</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => openEditPOModal(po)}
+                                className="px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs inline-flex items-center space-x-1.5 shadow transition-all cursor-pointer"
+                                title="Edit full purchase order console"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                                <span>Console</span>
+                              </button>
+
+                              <button
+                                type="button"
                                 onClick={() => {
-                                  if (confirm(`Cancel Purchase Order #${po.poNumber}?`)) {
-                                    onEditPurchaseOrder && onEditPurchaseOrder(po.id, { status: 'Cancelled' });
+                                  if (confirm(`Delete Purchase Order #${po.poNumber} permanently?`)) {
+                                    onDeletePurchaseOrder && onDeletePurchaseOrder(po.id);
                                   }
                                 }}
-                                className="px-2 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-bold text-[11px] border border-amber-500/30 transition-all cursor-pointer"
-                                title="Cancel purchase order"
+                                className="p-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white font-bold text-xs transition-all cursor-pointer border border-rose-500/30"
+                                title="Delete purchase order"
                               >
-                                <span>Cancel</span>
+                                <Trash2 className="w-4 h-4" />
                               </button>
-                            )}
-
-                            <button
-                              onClick={() => {
-                                if (confirm(`Are you sure you want to permanently delete purchase order "${po.poNumber}"?`)) {
-                                  onDeletePurchaseOrder && onDeletePurchaseOrder(po.id);
-                                }
-                              }}
-                              className="px-2 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 font-bold text-[11px] border border-rose-500/30 transition-all cursor-pointer"
-                              title="Delete purchase order"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            </div>
                           </div>
-                        </td>
+
+                          {/* GRN Meta Info Grid */}
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-4 bg-emerald-950/20 border-b border-gray-200 dark:border-slate-800 text-xs">
+                            <div className="space-y-1">
+                              <span className="text-[10px] font-bold uppercase text-gray-400 block">GRN / PO Ref:</span>
+                              <span className="font-mono font-black text-emerald-400 text-sm">GRN-{po.poNumber}</span>
+                            </div>
+                            <div className="space-y-1">
+                              <span className="text-[10px] font-bold uppercase text-gray-400 block">Supplier Name:</span>
+                              <input
+                                type="text"
+                                value={po.supplierName}
+                                onChange={(e) => onEditPurchaseOrder && onEditPurchaseOrder(po.id, { supplierName: e.target.value })}
+                                className="bg-gray-100 dark:bg-slate-800/80 border border-gray-300 dark:border-slate-700 rounded-lg px-2 py-1 font-bold text-gray-900 dark:text-white w-full focus:outline-none focus:border-emerald-500"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <span className="text-[10px] font-bold uppercase text-gray-400 block">Department Intake:</span>
+                              <select
+                                value={po.department}
+                                onChange={(e) => onEditPurchaseOrder && onEditPurchaseOrder(po.id, { department: e.target.value as any })}
+                                className="bg-gray-100 dark:bg-slate-800/80 border border-gray-300 dark:border-slate-700 rounded-lg px-2 py-1 font-bold text-gray-900 dark:text-white w-full focus:outline-none focus:border-emerald-500"
+                              >
+                                <option value="Bar / Beverage">Bar / Beverage</option>
+                                <option value="Kitchen">Kitchen</option>
+                              </select>
+                            </div>
+                            <div className="space-y-1">
+                              <span className="text-[10px] font-bold uppercase text-gray-400 block">Intake Status:</span>
+                              <div className="flex items-center gap-2">
+                                <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${
+                                  po.status === 'Received'
+                                    ? 'bg-emerald-500 text-slate-950 shadow'
+                                    : po.status === 'Partially Received'
+                                    ? 'bg-sky-500 text-slate-950 shadow'
+                                    : po.status === 'Cancelled'
+                                    ? 'bg-rose-500 text-white'
+                                    : 'bg-amber-500 text-slate-950 animate-pulse'
+                                }`}>
+                                  {po.status === 'Received'
+                                    ? '✓ Verified & Received in Stock'
+                                    : po.status === 'Partially Received'
+                                    ? '⚡ Partially Received'
+                                    : po.status === 'Cancelled'
+                                    ? '🚫 Cancelled'
+                                    : '⏳ Pending Physical Intake'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Interactive GRN Table (Matching Print Format) */}
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead>
+                                <tr className="bg-emerald-900 text-emerald-100 font-extrabold uppercase text-[10px] border-b border-emerald-800">
+                                  <th className="py-2.5 px-3 text-center w-14">[ ✓ ] Rec'd</th>
+                                  <th className="py-2.5 px-3">Item Description</th>
+                                  <th className="py-2.5 px-3">Category</th>
+                                  <th className="py-2.5 px-3">Target Location</th>
+                                  <th className="py-2.5 px-3 text-center">Ordered Qty</th>
+                                  <th className="py-2.5 px-3 text-center">Verified Received Qty</th>
+                                  <th className="py-2.5 px-3 text-right">Unit Price (RWF)</th>
+                                  <th className="py-2.5 px-3 text-right">Total Received Value</th>
+                                  <th className="py-2.5 px-3 text-center w-12">Action</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-200 dark:divide-slate-800">
+                                {po.items.map((it, idx) => {
+                                  const recQty = isFullyReceived
+                                    ? (it.receivedQuantity !== undefined ? it.receivedQuantity : it.quantity)
+                                    : (it.receivedQuantity !== undefined ? it.receivedQuantity : (it.received ? it.quantity : 0));
+                                  const isTicked = isFullyReceived || it.received || recQty > 0;
+                                  const lineValuation = recQty * (it.unitCost || 0);
+
+                                  return (
+                                    <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                                      {/* Tick box cell */}
+                                      <td className="py-2 px-3 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleInlineToggleItemTick(po, idx)}
+                                          className={`w-7 h-7 rounded-lg font-black text-sm inline-flex items-center justify-center transition-all cursor-pointer ${
+                                            isTicked
+                                              ? 'bg-emerald-600 text-white shadow-md'
+                                              : 'bg-gray-100 dark:bg-slate-800 text-gray-400 border border-gray-300 dark:border-slate-700 hover:border-emerald-500'
+                                          }`}
+                                          title={isTicked ? "Marked as Received" : "Click to tick received"}
+                                        >
+                                          ✓
+                                        </button>
+                                      </td>
+
+                                      {/* Item Description editable */}
+                                      <td className="py-2 px-3">
+                                        <input
+                                          type="text"
+                                          value={it.itemName}
+                                          onChange={(e) => handleInlineUpdatePOItem(po, idx, 'itemName', e.target.value)}
+                                          className="bg-transparent border-b border-gray-300 dark:border-slate-700 focus:border-emerald-500 focus:outline-none font-bold text-gray-900 dark:text-white w-full px-1 py-0.5"
+                                        />
+                                      </td>
+
+                                      {/* Category editable */}
+                                      <td className="py-2 px-3">
+                                        <input
+                                          type="text"
+                                          value={it.category || 'General'}
+                                          onChange={(e) => handleInlineUpdatePOItem(po, idx, 'category', e.target.value)}
+                                          className="bg-transparent border-b border-gray-300 dark:border-slate-700 focus:border-emerald-500 focus:outline-none text-gray-600 dark:text-gray-300 w-full px-1 py-0.5 text-xs"
+                                        />
+                                      </td>
+
+                                      {/* Target Location selector */}
+                                      <td className="py-2 px-3">
+                                        <select
+                                          value={it.destination || 'Main Beverage Stock'}
+                                          onChange={(e) => handleInlineUpdatePOItem(po, idx, 'destination', e.target.value)}
+                                          className="bg-emerald-950/20 border border-emerald-500/40 text-emerald-400 font-bold text-xs rounded-lg px-2 py-1 focus:outline-none focus:border-emerald-400"
+                                        >
+                                          <option value="Main Beverage Stock">Main Beverage Stock</option>
+                                          <option value="Bar Stock">Bar Stock</option>
+                                          <option value="Kitchen Stock">Kitchen Stock</option>
+                                        </select>
+                                      </td>
+
+                                      {/* Ordered Qty editable */}
+                                      <td className="py-2 px-3 text-center">
+                                        <input
+                                          type="number"
+                                          min="1"
+                                          value={it.quantity}
+                                          onChange={(e) => handleInlineUpdatePOItem(po, idx, 'quantity', Number(e.target.value))}
+                                          className="w-16 text-center font-bold bg-transparent border border-gray-300 dark:border-slate-700 rounded-lg px-1.5 py-1 text-gray-800 dark:text-gray-200 focus:border-emerald-500 focus:outline-none"
+                                        />
+                                      </td>
+
+                                      {/* Verified Received Qty editable */}
+                                      <td className="py-2 px-3 text-center">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          value={recQty}
+                                          onChange={(e) => handleInlineUpdatePOItem(po, idx, 'receivedQuantity', Number(e.target.value))}
+                                          className="w-16 text-center font-black bg-emerald-950/30 border border-emerald-500/60 rounded-lg px-1.5 py-1 text-emerald-400 focus:border-emerald-400 focus:outline-none"
+                                        />
+                                      </td>
+
+                                      {/* Unit Price (RWF) editable */}
+                                      <td className="py-2 px-3 text-right">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          value={it.unitCost || 0}
+                                          onChange={(e) => handleInlineUpdatePOItem(po, idx, 'unitCost', Number(e.target.value))}
+                                          className="w-24 text-right font-bold bg-transparent border border-gray-300 dark:border-slate-700 rounded-lg px-2 py-1 text-gray-900 dark:text-white focus:border-emerald-500 focus:outline-none"
+                                        />
+                                      </td>
+
+                                      {/* Total Received Value auto calculated */}
+                                      <td className="py-2 px-3 text-right font-black text-emerald-400 text-sm">
+                                        {formatCurrency(lineValuation)}
+                                      </td>
+
+                                      {/* Action - Delete item */}
+                                      <td className="py-2 px-3 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleInlineDeleteItem(po, idx)}
+                                          className="text-rose-400 hover:text-rose-300 p-1 rounded hover:bg-rose-500/20 transition-all"
+                                          title="Delete row from voucher"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+
+                                {/* Total Footer Row */}
+                                <tr className="bg-emerald-950/40 font-black border-t-2 border-emerald-500/50 text-xs">
+                                  <td colSpan={4} className="py-3 px-3 text-emerald-300">
+                                    <div className="flex items-center justify-between">
+                                      <span>TOTAL VERIFIED INTAKE ({po.items.length} items)</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleInlineAddItem(po)}
+                                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] inline-flex items-center space-x-1 shadow transition-all cursor-pointer"
+                                      >
+                                        <Plus className="w-3.5 h-3.5" />
+                                        <span>+ Add Item to Voucher</span>
+                                      </button>
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-3 text-center text-gray-300">{totalOrderedUnits} units</td>
+                                  <td className="py-3 px-3 text-center text-emerald-400 text-sm">{totalReceivedUnits} units</td>
+                                  <td className="py-3 px-3 text-right text-gray-400">Total:</td>
+                                  <td className="py-3 px-3 text-right text-emerald-400 text-base">{formatCurrency(totalReceivedValuation)}</td>
+                                  <td></td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              }
+
+              {/* COMPACT SUMMARY TABLE LAYOUT MODE */}
+              return (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-200 dark:border-gray-800 text-gray-400 font-bold uppercase text-[10px]">
+                        <th className="py-3 px-3">PO Number & Date</th>
+                        <th className="py-3 px-3">Supplier</th>
+                        <th className="py-3 px-3">Department</th>
+                        <th className="py-3 px-3">Purchased Items</th>
+                        <th className="py-3 px-3">Destination</th>
+                        <th className="py-3 px-3">Total Amount</th>
+                        <th className="py-3 px-3">Fulfillment Status</th>
+                        <th className="py-3 px-3 text-right">Actions</th>
                       </tr>
-                    ));
-                  })()}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                      {filteredPOs.map(po => (
+                        <tr key={po.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                          <td className="py-3 px-3 font-bold text-gray-900 dark:text-white">
+                            <div className="text-sky-400">{po.poNumber}</div>
+                            <div className="text-[10px] text-gray-400">{po.date}</div>
+                          </td>
+                          <td className="py-3 px-3 font-bold text-white">{po.supplierName}</td>
+                          <td className="py-3 px-3 font-medium text-gray-300">{po.department}</td>
+                          <td className="py-3 px-3 align-top min-w-[280px]">
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between text-[11px] font-bold text-gray-400">
+                                <span>📦 {po.items.length} {po.items.length === 1 ? 'Item' : 'Items'}</span>
+                              </div>
+                              <div className="max-h-36 overflow-y-auto space-y-1 pr-1 border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-950/40 p-2 rounded-xl">
+                                {po.items.map((it, idx) => {
+                                  const isFullyReceivedPO = po.status === 'Received';
+                                  const recQty = isFullyReceivedPO
+                                    ? (it.receivedQuantity !== undefined ? it.receivedQuantity : it.quantity)
+                                    : (it.receivedQuantity !== undefined ? it.receivedQuantity : (it.received ? it.quantity : 0));
+
+                                  return (
+                                    <div key={idx} className="text-xs font-semibold text-gray-800 dark:text-gray-200 flex flex-wrap items-center justify-between gap-1 pb-1 border-b border-gray-200/50 dark:border-slate-800/60 last:border-0 last:pb-0">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-sky-400">•</span>
+                                        <span className="font-bold text-white">{it.itemName}</span>
+                                        <span className="text-[10px] text-gray-400 font-mono">
+                                          ({it.quantity} ordered {it.unitCost > 0 ? `@ ${formatCurrency(it.unitCost)}` : ''})
+                                        </span>
+                                      </div>
+                                      {po.status === 'Partially Received' && (
+                                        <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-bold ${
+                                          recQty >= it.quantity 
+                                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                                            : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                        }`}>
+                                          Rec'd: {recQty}/{it.quantity}
+                                        </span>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 font-bold text-indigo-400">
+                            {po.items[0]?.destination || 'Store'}
+                          </td>
+                          <td className="py-3 px-3 font-black text-gray-900 dark:text-white">
+                            {formatCurrency(po.totalAmount)}
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-black ${
+                              po.status === 'Received'
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                : po.status === 'Partially Received'
+                                ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
+                                : po.status === 'Cancelled'
+                                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                : 'bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse'
+                            }`}>
+                              {po.status === 'Received'
+                                ? '✓ Received (In Stock)'
+                                : po.status === 'Partially Received'
+                                ? '⚡ Partially Received'
+                                : po.status === 'Cancelled'
+                                ? '🚫 Cancelled'
+                                : '⏳ Ordered (Pending Intake)'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <div className="flex justify-end items-center gap-1.5 flex-wrap">
+                              {(po.status === 'Pending' || po.status === 'Partially Received') && (
+                                <button
+                                  type="button"
+                                  onClick={() => openReceiveModal(po)}
+                                  className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[11px] inline-flex items-center space-x-1 shadow-md transition-all cursor-pointer"
+                                  title="Accept & receive products with tickboxes"
+                                >
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>Accept & Receive</span>
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => handlePrintLPO(po)}
+                                className="px-2.5 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-500 text-white font-bold text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
+                                title="Print Local Purchase Order (LPO)"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                                <span>Print LPO</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handlePrintGoodsReceivedNote(po)}
+                                className={`px-2.5 py-1.5 rounded-lg font-bold text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer ${
+                                  po.status === 'Received' || po.status === 'Partially Received'
+                                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                    : 'bg-gray-700/60 hover:bg-gray-700 text-gray-300 border border-gray-600'
+                                }`}
+                                title={po.status === 'Pending' ? "Cannot print GRN until order is received into stock" : "Print Official Goods Received Note (GRN)"}
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                <span>Print GRN</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => openEditPOModal(po)}
+                                className="px-2.5 py-1.5 rounded-lg bg-sky-600/80 hover:bg-sky-500 text-white font-bold text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
+                                title="Edit purchase order details"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                                <span>Edit</span>
+                              </button>
+
+                              {po.status === 'Pending' && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (confirm(`Cancel Purchase Order #${po.poNumber}?`)) {
+                                      onEditPurchaseOrder && onEditPurchaseOrder(po.id, { status: 'Cancelled' });
+                                    }
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-lg bg-rose-600/80 hover:bg-rose-500 text-white font-bold text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
+                                  title="Cancel purchase order"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                  <span>Cancel</span>
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (confirm(`Are you sure you want to permanently delete purchase order "${po.poNumber}"?`)) {
+                                    onDeletePurchaseOrder && onDeletePurchaseOrder(po.id);
+                                  }
+                                }}
+                                className="px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 font-bold text-[11px] border border-rose-500/30 transition-all cursor-pointer"
+                                title="Delete purchase order"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
