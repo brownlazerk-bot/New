@@ -1069,18 +1069,31 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Meters, Kg, Litre, Roll, Box..."
+                    list="store-units-list"
+                    placeholder="e.g. Meters, Centimeters, Kg, Litre, Roll..."
                     value={ingUnit}
                     onChange={(e) => setIngUnit(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white focus:border-emerald-500"
                   />
+                  <datalist id="store-units-list">
+                    <option value="Meters">Meters (Foil / Wrap Length)</option>
+                    <option value="Centimeters">Centimeters (cm)</option>
+                    <option value="Roll">Roll (Aluminium Foil)</option>
+                    <option value="Kg">Kilogram (Kg)</option>
+                    <option value="Grams">Grams (g)</option>
+                    <option value="Litre">Litre (L)</option>
+                    <option value="ml">Milliliters (ml)</option>
+                    <option value="Piece">Piece / Unit</option>
+                    <option value="Tray">Tray</option>
+                    <option value="Box">Box / Pack</option>
+                  </datalist>
                 </div>
               </div>
 
               {/* Quick Unit Presets */}
               <div className="space-y-1">
                 <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
-                  Quick Measurement Presets:
+                  Quick Measurement Presets (Foil, Meat, Grains, Liquid):
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   <button
@@ -1096,7 +1109,7 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
                     }}
                     className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold hover:bg-emerald-500/30 transition-all cursor-pointer flex items-center gap-1"
                   >
-                    <span>📏 Foil & Wrap (Meters / Roll)</span>
+                    <span>📏 Foil / Wrap (Meters / 50m Roll)</span>
                   </button>
                   <button
                     type="button"
@@ -1111,7 +1124,22 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
                     }}
                     className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[11px] font-bold hover:bg-amber-500/30 transition-all cursor-pointer flex items-center gap-1"
                   >
-                    <span>📐 Foil (Meters / cm)</span>
+                    <span>📐 Foil (Meters Store / cm Recipe)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIngUnit('Centimeters');
+                      setIngPurchaseUnit('Roll');
+                      setIngRecipeUnit('cm');
+                      setIngConversionRate(5000);
+                      if (!ingCategory || ingCategory === 'Other Raw Materials') {
+                        setIngCategory('Kitchen Packaging & Foil');
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-teal-500/20 text-teal-300 border border-teal-500/30 text-[11px] font-bold hover:bg-teal-500/30 transition-all cursor-pointer flex items-center gap-1"
+                  >
+                    <span>📏 Centimeters (cm)</span>
                   </button>
                   <button
                     type="button"
