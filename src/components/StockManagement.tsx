@@ -2769,7 +2769,7 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                                   const recQty = isFullyReceived
                                     ? (it.receivedQuantity !== undefined ? it.receivedQuantity : it.quantity)
                                     : (it.receivedQuantity !== undefined ? it.receivedQuantity : (it.received ? it.quantity : 0));
-                                  const isTicked = isFullyReceived || it.received || recQty > 0;
+                                  const isTicked = isFullyReceived || (it.receivedQuantity !== undefined ? it.receivedQuantity > 0 : !!it.received);
                                   const lineValuation = recQty * (it.unitCost || 0);
 
                                   return (
@@ -2781,12 +2781,12 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                                           onClick={() => handleInlineToggleItemTick(po, idx)}
                                           className={`w-7 h-7 rounded-lg font-black text-sm inline-flex items-center justify-center transition-all cursor-pointer ${
                                             isTicked
-                                              ? 'bg-emerald-600 text-white shadow-md'
-                                              : 'bg-gray-100 dark:bg-slate-800 text-gray-400 border border-gray-300 dark:border-slate-700 hover:border-emerald-500'
+                                              ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-md shadow-emerald-500/30 border-2 border-emerald-400 scale-105'
+                                              : 'bg-slate-100 dark:bg-slate-800/80 text-slate-400 border-2 border-slate-300 dark:border-slate-700 hover:border-amber-500 hover:text-amber-500 hover:bg-amber-500/10'
                                           }`}
-                                          title={isTicked ? "Marked as Received" : "Click to tick received"}
+                                          title={isTicked ? "Received into stock (click to untick)" : "Not yet received (click to tick as received)"}
                                         >
-                                          ✓
+                                          {isTicked ? '✓' : ''}
                                         </button>
                                       </td>
 
