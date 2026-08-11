@@ -101,6 +101,7 @@ export type KitchenIngredientCategory =
   | 'Spices & Oils' 
   | 'Dairy & Eggs' 
   | 'Seafood' 
+  | 'Kitchen Packaging & Foil'
   | 'Beverage Raw Materials'
   | 'Other Raw Materials';
 

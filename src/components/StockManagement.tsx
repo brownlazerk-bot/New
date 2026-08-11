@@ -11,6 +11,7 @@ import { formatCurrency } from '../lib/currency';
 import { calculateStockMovementsForDate, ItemStockMovement } from '../lib/stockMovement';
 import { printReportHTML } from '../lib/exporter';
 import { KitchenRecipeManager } from './KitchenRecipeManager';
+import { IngredientYieldAnalyzer } from './IngredientYieldAnalyzer';
 
 import { Language, getTranslation } from '../lib/translations';
 
@@ -92,7 +93,7 @@ export const StockManagement: React.FC<StockManagementProps> = ({
   loggedInUser
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<
-    'main_beverage' | 'kitchen_stock' | 'recipes_ingredients' | 'purchasing' | 'transfers_log' | 'available' | 'unpaid_reserved' | 'reconciliation' | 'logs'
+    'main_beverage' | 'kitchen_stock' | 'recipes_ingredients' | 'limit_orders_yield' | 'purchasing' | 'transfers_log' | 'available' | 'unpaid_reserved' | 'reconciliation' | 'logs'
   >('main_beverage');
 
   // Main Beverage Stock Console / Recording & Edit State
@@ -1592,12 +1593,24 @@ export const StockManagement: React.FC<StockManagementProps> = ({
           onClick={() => setActiveSubTab('recipes_ingredients')}
           className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer ${
             activeSubTab === 'recipes_ingredients'
-              ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+              ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20 font-black'
               : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
           }`}
         >
           <Layers className="w-4 h-4 text-amber-500" />
           <span>Kitchen Recipes & Raw Ingredients (BOM)</span>
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('limit_orders_yield')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer ${
+            activeSubTab === 'limit_orders_yield'
+              ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20 font-black'
+              : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-emerald-500" />
+          <span>📊 Limit Orders & Profit Yield</span>
         </button>
 
         <button
@@ -1949,6 +1962,17 @@ export const StockManagement: React.FC<StockManagementProps> = ({
           onSaveIngredients={onSaveIngredients || (() => {})}
           onSaveRecipe={onSaveRecipe || (() => {})}
           onAddWasteRecord={onAddWasteRecord}
+          loggedInUser={loggedInUser}
+          darkMode={darkMode}
+        />
+      )}
+
+      {/* VIEW: INGREDIENT LIMIT ORDERS & PROFIT YIELD ANALYZER */}
+      {activeSubTab === 'limit_orders_yield' && (
+        <IngredientYieldAnalyzer
+          menuItems={menuItems}
+          ingredients={ingredients || []}
+          onCreatePurchaseOrder={onCreatePurchaseOrder}
           loggedInUser={loggedInUser}
           darkMode={darkMode}
         />

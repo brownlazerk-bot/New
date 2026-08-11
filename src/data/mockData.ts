@@ -202,6 +202,25 @@ export const INITIAL_KITCHEN_INGREDIENTS: KitchenIngredient[] = [
     storageLocation: 'Pantry Rack 3',
     supplier: 'Bugesera Poultry Farm',
     status: 'Available'
+  },
+  {
+    id: 'ing-107',
+    code: 'RAW-07',
+    name: 'Heavy-Duty Aluminium Foil',
+    category: 'Kitchen Packaging & Foil',
+    stockQuantity: 120,
+    unit: 'Meters',
+    purchaseUnit: 'Roll',
+    recipeUnit: 'Meters',
+    conversionRate: 50, // 1 Roll = 50 Meters
+    costPerUnit: 250, // 250 RWF per Meter (e.g. 12,500 RWF per 50m Roll)
+    averageCost: 240,
+    minStockAlert: 20,
+    maxStock: 300,
+    storageLocation: 'Kitchen Store Shelf B (Packaging)',
+    supplier: 'Kigali Packaging Solutions Ltd',
+    status: 'Available',
+    notes: 'Used in meters/cm to wrap & cover grilled orders (Chicken, Fish, Meat) when cooking on fire'
   }
 ];
 

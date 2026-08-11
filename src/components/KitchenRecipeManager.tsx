@@ -11,8 +11,9 @@ import {
   Utensils, Plus, Edit2, Trash2, CheckCircle2, AlertTriangle, 
   XCircle, Package, Scale, Layers, ChefHat, Search, Filter, RefreshCw, Info, DollarSign, Calculator,
   TrendingDown, FileText, ArrowUpRight, ArrowDownRight, Activity, ShieldAlert, ShieldCheck, Clock, Calendar, User,
-  Wine
+  Wine, Sparkles
 } from 'lucide-react';
+import { IngredientYieldAnalyzer } from './IngredientYieldAnalyzer';
 
 interface KitchenRecipeManagerProps {
   menuItems: MenuItem[];
@@ -33,6 +34,7 @@ const INGREDIENT_CATEGORIES: KitchenIngredientCategory[] = [
   'Spices & Oils',
   'Dairy & Eggs',
   'Seafood',
+  'Kitchen Packaging & Foil',
   'Beverage Raw Materials',
   'Other Raw Materials'
 ];
@@ -58,7 +60,7 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
   loggedInUser,
   darkMode = true
 }) => {
-  const [activeTab, setActiveTab] = useState<'recipes' | 'ingredients' | 'waste' | 'movements' | 'reports'>('recipes');
+  const [activeTab, setActiveTab] = useState<'recipes' | 'ingredients' | 'yield_analyzer' | 'waste' | 'movements' | 'reports'>('recipes');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
 
@@ -521,6 +523,7 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
           {[
             { id: 'recipes', label: 'Dish Recipes & BOM Formulas', icon: Layers },
             { id: 'ingredients', label: `Raw Ingredients Database (${ingredients.length})`, icon: Package },
+            { id: 'yield_analyzer', label: '📊 Limit Orders & Profit Yield', icon: Sparkles },
             { id: 'waste', label: `Kitchen Waste Log (${wasteRecords.length})`, icon: Trash2 },
             { id: 'movements', label: `Stock Movement Ledger (${stockMovements.length})`, icon: Activity },
             { id: 'reports', label: 'Food Cost & Profit Reports', icon: Calculator }
@@ -788,7 +791,15 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
         </div>
       )}
 
-      {/* TAB 3: KITCHEN WASTE & SPOILAGE LOG */}
+      {/* TAB: INGREDIENT LIMIT ORDERS & PROFIT YIELD ANALYZER */}
+      {activeTab === 'yield_analyzer' && (
+        <IngredientYieldAnalyzer
+          menuItems={menuItems}
+          ingredients={ingredients}
+          loggedInUser={loggedInUser}
+          darkMode={darkMode}
+        />
+      )}
       {activeTab === 'waste' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
@@ -1058,11 +1069,86 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Kg, Litre, Tray, Box..."
+                    placeholder="e.g. Meters, Kg, Litre, Roll, Box..."
                     value={ingUnit}
                     onChange={(e) => setIngUnit(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white focus:border-emerald-500"
                   />
+                </div>
+              </div>
+
+              {/* Quick Unit Presets */}
+              <div className="space-y-1">
+                <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
+                  Quick Measurement Presets:
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIngUnit('Meters');
+                      setIngPurchaseUnit('Roll');
+                      setIngRecipeUnit('Meters');
+                      setIngConversionRate(50);
+                      if (!ingCategory || ingCategory === 'Other Raw Materials') {
+                        setIngCategory('Kitchen Packaging & Foil');
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold hover:bg-emerald-500/30 transition-all cursor-pointer flex items-center gap-1"
+                  >
+                    <span>📏 Foil & Wrap (Meters / Roll)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIngUnit('Meters');
+                      setIngPurchaseUnit('Roll');
+                      setIngRecipeUnit('cm');
+                      setIngConversionRate(5000);
+                      if (!ingCategory || ingCategory === 'Other Raw Materials') {
+                        setIngCategory('Kitchen Packaging & Foil');
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[11px] font-bold hover:bg-amber-500/30 transition-all cursor-pointer flex items-center gap-1"
+                  >
+                    <span>📐 Foil (Meters / cm)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIngUnit('Kg');
+                      setIngPurchaseUnit('Kg');
+                      setIngRecipeUnit('g');
+                      setIngConversionRate(1000);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 text-[11px] font-bold hover:bg-slate-700 transition-all cursor-pointer"
+                  >
+                    ⚖️ Weight (Kg / g)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIngUnit('Litre');
+                      setIngPurchaseUnit('Litre');
+                      setIngRecipeUnit('ml');
+                      setIngConversionRate(1000);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 text-[11px] font-bold hover:bg-slate-700 transition-all cursor-pointer"
+                  >
+                    🧪 Volume (Litre / ml)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIngUnit('Tray');
+                      setIngPurchaseUnit('Tray');
+                      setIngRecipeUnit('Piece');
+                      setIngConversionRate(30);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 text-[11px] font-bold hover:bg-slate-700 transition-all cursor-pointer"
+                  >
+                    📦 Count (Tray / Pcs)
+                  </button>
                 </div>
               </div>
 
