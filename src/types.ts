@@ -402,6 +402,8 @@ export interface PurchaseOrderItem {
   unitCost: number;
   totalCost: number;
   destination: 'Main Beverage Stock' | 'Bar Stock' | 'Kitchen Stock';
+  receivedQuantity?: number;
+  received?: boolean;
 }
 
 export interface PurchaseOrder {
@@ -413,7 +415,7 @@ export interface PurchaseOrder {
   department: 'Bar / Beverage' | 'Kitchen';
   items: PurchaseOrderItem[];
   totalAmount: number;
-  status: 'Pending' | 'Received' | 'Cancelled';
+  status: 'Pending' | 'Partially Received' | 'Received' | 'Cancelled';
   paymentStatus: 'Paid' | 'Unpaid';
   createdByName: string;
   receivedAt?: string;

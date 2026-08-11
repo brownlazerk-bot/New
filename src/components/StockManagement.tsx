@@ -6,7 +6,7 @@ import {
   Calendar, Download, ArrowRight, Printer, CheckSquare, Square, Utensils, Wine, Filter, Check,
   ArrowRightLeft, Store, Boxes, Truck, ArrowDownToLine, Building2, Sparkles, Lightbulb, ShoppingCart
 } from 'lucide-react';
-import { MenuItem, StockAdjustmentLog, Order, Table, Waiter, AppUser, PurchaseOrder, KitchenIngredient, RecipeIngredient, StockMovementRecord, KitchenWasteRecord } from '../types';
+import { MenuItem, StockAdjustmentLog, Order, Table, Waiter, AppUser, PurchaseOrder, PurchaseOrderItem, KitchenIngredient, RecipeIngredient, StockMovementRecord, KitchenWasteRecord } from '../types';
 import { formatCurrency } from '../lib/currency';
 import { calculateStockMovementsForDate, ItemStockMovement } from '../lib/stockMovement';
 import { printReportHTML } from '../lib/exporter';
@@ -51,7 +51,11 @@ interface StockManagementProps {
   ) => void;
   onTransferStock?: (itemId: string, quantity: number, reason: string) => void;
   onCreatePurchaseOrder?: (po: Omit<PurchaseOrder, 'id' | 'poNumber' | 'timestamp'>) => void;
-  onReceivePurchaseOrder?: (poId: string) => void;
+  onReceivePurchaseOrder?: (
+    poId: string, 
+    receivedItemsPayload?: { itemId: string; receivedQty: number; unitCost?: number; ticked: boolean }[],
+    receiverName?: string
+  ) => void;
   onEditPurchaseOrder?: (poId: string, updatedPO: Partial<PurchaseOrder>) => void;
   onDeletePurchaseOrder?: (poId: string) => void;
   onNavigateToOrders?: () => void;
@@ -129,6 +133,25 @@ export const StockManagement: React.FC<StockManagementProps> = ({
   const [poCustomCategory, setPoCustomCategory] = useState<string>('Kitchen / Dry Store');
   const [poCustomUnit, setPoCustomUnit] = useState<string>('Kg');
   const [poNotes, setPoNotes] = useState<string>('');
+
+  // PO Filter Tab: 'pending' (Ordered / Not Yet Received), 'received' (History), 'all'
+  const [poTabFilter, setPoTabFilter] = useState<'pending' | 'received' | 'all'>('pending');
+
+  // Accept & Receive Goods Modal State (Itemized Checkboxes & Received Quantities)
+  const [showReceiveModal, setShowReceiveModal] = useState<boolean>(false);
+  const [receivingPo, setReceivingPo] = useState<PurchaseOrder | null>(null);
+  const [receivingReceiverName, setReceivingReceiverName] = useState<string>('');
+  const [receivingNotes, setReceivingNotes] = useState<string>('');
+  const [receivingItems, setReceivingItems] = useState<{
+    itemId: string;
+    itemName: string;
+    category: string;
+    quantity: number;
+    receivedQty: number;
+    unitCost: number;
+    destination: 'Main Beverage Stock' | 'Bar Stock' | 'Kitchen Stock';
+    ticked: boolean;
+  }[]>([]);
 
   // Edit Purchase Order Console Modal State
   const [showEditPOModal, setShowEditPOModal] = useState<boolean>(false);
@@ -639,6 +662,51 @@ export const StockManagement: React.FC<StockManagementProps> = ({
     alert(`Kitchen Stock for "${targetItem.name}" updated successfully to ${finalQty} ${kitchenStockUnit}!`);
   };
 
+  // Open Accept & Receive Goods Modal (Ticking items and editing received quantities)
+  const openReceiveModal = (po: PurchaseOrder) => {
+    setReceivingPo(po);
+    setReceivingReceiverName(loggedInUser?.fullName || 'Storekeeper');
+    setReceivingNotes(po.notes || '');
+    setReceivingItems(po.items.map(it => ({
+      itemId: it.itemId,
+      itemName: it.itemName,
+      category: it.category,
+      quantity: it.quantity,
+      receivedQty: it.receivedQuantity !== undefined && it.receivedQuantity > 0 ? it.receivedQuantity : it.quantity,
+      unitCost: it.unitCost,
+      destination: it.destination,
+      ticked: it.received !== undefined ? !it.received : true
+    })));
+    setShowReceiveModal(true);
+  };
+
+  const handleConfirmReceiveGoods = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!receivingPo) return;
+
+    const tickedItems = receivingItems.filter(i => i.ticked && i.receivedQty > 0);
+    if (tickedItems.length === 0) {
+      alert('Please tick at least one item received from the supplier delivery!');
+      return;
+    }
+
+    if (onReceivePurchaseOrder) {
+      onReceivePurchaseOrder(
+        receivingPo.id,
+        receivingItems.map(i => ({
+          itemId: i.itemId,
+          receivedQty: Number(i.receivedQty),
+          unitCost: Number(i.unitCost),
+          ticked: i.ticked
+        })),
+        receivingReceiverName
+      );
+    }
+
+    setShowReceiveModal(false);
+    alert(`✓ Purchase Order #${receivingPo.poNumber} accepted! Received items have been added into inventory stock.`);
+  };
+
   // Open Edit Purchase Order Console Modal
   const openEditPOModal = (po: PurchaseOrder) => {
     setEditingPoId(po.id);
@@ -963,10 +1031,9 @@ export const StockManagement: React.FC<StockManagementProps> = ({
     printReportHTML(`Purchases Report - ${new Date().toISOString().split('T')[0]}`, html);
   };
 
-  // Print Single Purchase Order / Goods Receiving Voucher (with Physical Tick Boxes for Pen Inspection)
-  const handlePrintSinglePO = (po: PurchaseOrder) => {
+  // Print Local Purchase Order (LPO) / Order Requisition Sheet (What we ordered)
+  const handlePrintLPO = (po: PurchaseOrder) => {
     const staffName = loggedInUser?.fullName || 'Storekeeper / Purchasing Officer';
-    const isReceived = po.status === 'Received';
 
     const html = `
       <style>
@@ -983,24 +1050,19 @@ export const StockManagement: React.FC<StockManagementProps> = ({
         .meta-label { font-weight: 700; color: #475569; }
         .meta-value { font-weight: 800; color: #0f172a; }
 
-        .instruction-box { background: #fffbebe6; border: 1.5px dashed #f59e0b; padding: 8px 12px; border-radius: 6px; font-size: 10px; color: #92400e; margin-bottom: 12px; font-weight: 600; }
+        .badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-weight: 800; font-size: 10px; text-transform: uppercase; }
+        .badge-pending { background: #fef3c7; color: #b45309; border: 1px solid #f59e0b; }
+        .badge-received { background: #dcfce7; color: #15803d; border: 1px solid #22c55e; }
 
         table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 10.5px; }
         th { background: #0f172a; color: #ffffff; border: 1px solid #0f172a; padding: 7px 5px; font-weight: 800; text-align: left; font-size: 10px; text-transform: uppercase; }
         td { border: 1px solid #cbd5e1; padding: 7px 5px; vertical-align: middle; }
         
-        .tick-box-cell { text-align: center; width: 60px; }
-        .tick-box { width: 22px; height: 22px; border: 2px solid #0f172a; border-radius: 4px; margin: auto; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 15px; color: #0f172a; background: #ffffff; }
-
-        .pen-area { font-size: 9px; color: #64748b; }
-        .pen-line { border-bottom: 1px dashed #94a3b8; height: 16px; width: 100%; display: block; margin-top: 2px; }
         .text-right { text-align: right; }
         .text-center { text-align: center; }
         .total-row { background: #f1f5f9; font-weight: bold; border-top: 2px solid #0f172a; font-size: 11px; }
 
-        .notes-section { border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; margin-bottom: 15px; font-size: 10px; background: #fafafa; }
-
-        .signatures-grid { display: flex; justify-content: space-between; gap: 12px; margin-top: 25px; padding-top: 12px; border-top: 2px solid #e2e8f0; }
+        .signatures-grid { display: flex; justify-content: space-between; gap: 12px; margin-top: 30px; padding-top: 12px; border-top: 2px solid #e2e8f0; }
         .sig-block { flex: 1; text-align: center; }
         .sig-title { font-size: 10px; font-weight: 800; color: #334155; text-transform: uppercase; margin-bottom: 30px; }
         .sig-line { border-top: 1px solid #0f172a; width: 85%; margin: 0 auto 3px auto; }
@@ -1009,95 +1071,231 @@ export const StockManagement: React.FC<StockManagementProps> = ({
 
       <div class="header">
         <h1 class="resort-title">SEVEN TO SEVEN - SKY VIEW RESORT</h1>
-        <div class="voucher-title">GOODS RECEIVING SHEET & PURCHASE ORDER VOUCHER</div>
-        <div class="voucher-subtitle">Physical Delivery Inspection & Inventory Intake Checklist</div>
+        <div class="voucher-title">LOCAL PURCHASE ORDER (LPO) & ORDER REQUISITION</div>
+        <div class="voucher-subtitle">Official Purchasing Order Sent to Supplier</div>
       </div>
 
       <div class="meta-container">
         <div class="meta-col">
-          <div class="meta-row"><span class="meta-label">PO Number:</span><span class="meta-value" style="color: #0284c7; font-size: 12px;">${po.poNumber}</span></div>
+          <div class="meta-row"><span class="meta-label">LPO / PO Number:</span><span class="meta-value" style="color: #0284c7; font-size: 12px;">${po.poNumber}</span></div>
           <div class="meta-row"><span class="meta-label">Order Date:</span><span class="meta-value">${po.date}</span></div>
           <div class="meta-row"><span class="meta-label">Department:</span><span class="meta-value">${po.department}</span></div>
-          <div class="meta-row"><span class="meta-label">Issued By:</span><span class="meta-value">${po.createdByName || 'Storekeeper'}</span></div>
+          <div class="meta-row"><span class="meta-label">Issued By:</span><span class="meta-value">${po.createdByName || staffName}</span></div>
         </div>
         <div class="meta-col" style="border-left: 1px solid #cbd5e1; padding-left: 15px;">
           <div class="meta-row"><span class="meta-label">Supplier Name:</span><span class="meta-value" style="font-size: 11px; color: #0369a1;">${po.supplierName}</span></div>
-          <div class="meta-row"><span class="meta-label">Payment Status:</span><span class="meta-value" style="color: ${po.paymentStatus === 'Paid' ? '#16a34a' : '#dc2626'};">${po.paymentStatus || 'Paid'}</span></div>
-          <div class="meta-row"><span class="meta-label">Status:</span><span class="meta-value" style="color: ${isReceived ? '#16a34a' : '#d97706'};">${isReceived ? '✓ RECEIVED IN STOCK' : '⏳ PENDING PHYSICAL INTAKE'}</span></div>
+          <div class="meta-row"><span class="meta-label">Payment Terms:</span><span class="meta-value" style="color: ${po.paymentStatus === 'Paid' ? '#16a34a' : '#dc2626'};">${po.paymentStatus || 'Paid'}</span></div>
+          <div class="meta-row"><span class="meta-label">Order Status:</span><span class="meta-value"><span class="badge ${po.status === 'Received' ? 'badge-received' : 'badge-pending'}">${po.status === 'Received' ? '✓ FULLY RECEIVED' : po.status === 'Partially Received' ? 'PARTIALLY RECEIVED' : '⏳ ORDERED / PENDING DELIVERY'}</span></span></div>
           <div class="meta-row"><span class="meta-label">Print Time:</span><span class="meta-value">${new Date().toLocaleString()}</span></div>
         </div>
       </div>
 
-      <div class="instruction-box">
-        <strong>📋 PHYSICAL RECEIVING INSTRUCTIONS:</strong><br/>
-        Storekeeper / Receiver: Inspect physical items delivered. Tick <strong>[ ✓ ]</strong> the box for each verified item received. Write the unit cost and total amount manually with a pen after physical inspection, then sign below.
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 30px;">#</th>
+            <th>Item Description</th>
+            <th>Category</th>
+            <th>Destination</th>
+            <th class="text-center">Ordered Qty</th>
+            <th class="text-right">Unit Price (RWF)</th>
+            <th class="text-right">Total Price (RWF)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${po.items.map((item, idx) => `
+            <tr>
+              <td class="text-center" style="font-weight: 700;">${idx + 1}</td>
+              <td><strong style="font-size: 11px; color: #0f172a;">${item.itemName}</strong></td>
+              <td style="color: #475569;">${item.category}</td>
+              <td style="color: #4f46e5; font-weight: 700;">${item.destination}</td>
+              <td class="text-center" style="font-weight: 900; font-size: 12px;">${item.quantity}</td>
+              <td class="text-right">${item.unitCost ? item.unitCost.toLocaleString() : '0'}</td>
+              <td class="text-right" style="font-weight: 800;">${(item.quantity * item.unitCost).toLocaleString()}</td>
+            </tr>
+          `).join('')}
+          <tr class="total-row">
+            <td colspan="4">TOTAL ORDERED VALUE (${po.items.length} line items)</td>
+            <td class="text-center">${po.items.reduce((acc, i) => acc + i.quantity, 0)} units</td>
+            <td></td>
+            <td class="text-right" style="font-weight: 900; color: #0284c7; font-size: 12px;">${po.totalAmount.toLocaleString()} RWF</td>
+          </tr>
+        </tbody>
+      </table>
+
+      ${po.notes ? `
+        <div style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; margin-bottom: 15px; font-size: 10px; background: #fafafa;">
+          <strong>Requisition / Supplier Instructions:</strong> ${po.notes}
+        </div>
+      ` : ''}
+
+      <div class="signatures-grid">
+        <div class="sig-block">
+          <div class="sig-title">Purchasing / Prepared By</div>
+          <div class="sig-line"></div>
+          <div class="sig-label">${staffName}</div>
+        </div>
+        <div class="sig-block">
+          <div class="sig-title">Approved By Management</div>
+          <div class="sig-line"></div>
+          <div class="sig-label">Authorized Signature & Stamp</div>
+        </div>
+        <div class="sig-block">
+          <div class="sig-title">Supplier Acknowledgement</div>
+          <div class="sig-line"></div>
+          <div class="sig-label">Name, Date & Stamp</div>
+        </div>
+      </div>
+    `;
+
+    printReportHTML(`LPO_${po.poNumber}`, html);
+  };
+
+  // Print Official Goods Received Note (GRN) (Only allowed after goods are accepted & received!)
+  const handlePrintGoodsReceivedNote = (po: PurchaseOrder) => {
+    if (po.status === 'Pending') {
+      alert(`🚫 CANNOT PRINT GOODS RECEIVED NOTE FOR UNRECEIVED ORDER!\n\nPurchase Order #${po.poNumber} has been ordered, but the products have NOT been accepted or received into stock yet.\n\nPlease click "Accept & Receive Goods" on this order to tick received items and intake them into inventory before printing the Goods Received Note.`);
+      return;
+    }
+
+    const staffName = po.receivedByName || loggedInUser?.fullName || 'Storekeeper / Receiver';
+
+    const html = `
+      <style>
+        @page { size: A4 portrait; margin: 10mm; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; color: #0f172a; margin: 0; padding: 12px; line-height: 1.4; }
+        .header { text-align: center; border-bottom: 3px double #16a34a; padding-bottom: 8px; margin-bottom: 12px; }
+        .resort-title { font-size: 20px; font-weight: 900; color: #0f172a; letter-spacing: 0.5px; margin: 0; }
+        .voucher-title { font-size: 14px; font-weight: 800; color: #16a34a; text-transform: uppercase; margin: 3px 0 2px 0; }
+        .voucher-subtitle { font-size: 10px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+
+        .meta-container { display: flex; justify-content: space-between; gap: 15px; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 6px; padding: 10px; margin-bottom: 12px; }
+        .meta-col { flex: 1; }
+        .meta-row { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 10.5px; }
+        .meta-label { font-weight: 700; color: #166534; }
+        .meta-value { font-weight: 800; color: #0f172a; }
+
+        .badge-received { display: inline-block; padding: 3px 8px; border-radius: 4px; font-weight: 800; font-size: 10px; text-transform: uppercase; background: #16a34a; color: #ffffff; }
+
+        table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 10.5px; }
+        th { background: #064e3b; color: #ffffff; border: 1px solid #064e3b; padding: 7px 5px; font-weight: 800; text-align: left; font-size: 10px; text-transform: uppercase; }
+        td { border: 1px solid #cbd5e1; padding: 7px 5px; vertical-align: middle; }
+        
+        .tick-box-cell { text-align: center; width: 50px; }
+        .tick-box { width: 22px; height: 22px; border: 2px solid #16a34a; border-radius: 4px; margin: auto; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 15px; color: #ffffff; background: #16a34a; }
+
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+        .total-row { background: #f0fdf4; font-weight: bold; border-top: 2px solid #16a34a; font-size: 11px; }
+
+        .signatures-grid { display: flex; justify-content: space-between; gap: 12px; margin-top: 30px; padding-top: 12px; border-top: 2px solid #e2e8f0; }
+        .sig-block { flex: 1; text-align: center; }
+        .sig-title { font-size: 10px; font-weight: 800; color: #334155; text-transform: uppercase; margin-bottom: 30px; }
+        .sig-line { border-top: 1px solid #0f172a; width: 85%; margin: 0 auto 3px auto; }
+        .sig-label { font-size: 9px; color: #64748b; font-weight: 600; }
+      </style>
+
+      <div class="header">
+        <h1 class="resort-title">SEVEN TO SEVEN - SKY VIEW RESORT</h1>
+        <div class="voucher-title">OFFICIAL GOODS RECEIVED NOTE (GRN) & INTAKE RECEIPT</div>
+        <div class="voucher-subtitle">Physical Inventory Intake Verification & Verified Stock Receipt</div>
+      </div>
+
+      <div class="meta-container">
+        <div class="meta-col">
+          <div class="meta-row"><span class="meta-label">GRN / PO Ref:</span><span class="meta-value" style="color: #16a34a; font-size: 12px;">GRN-${po.poNumber}</span></div>
+          <div class="meta-row"><span class="meta-label">Order Date:</span><span class="meta-value">${po.date}</span></div>
+          <div class="meta-row"><span class="meta-label">Received Date & Time:</span><span class="meta-value" style="color: #15803d;">${po.receivedAt ? new Date(po.receivedAt).toLocaleString() : new Date().toLocaleString()}</span></div>
+          <div class="meta-row"><span class="meta-label">Department Intake:</span><span class="meta-value">${po.department}</span></div>
+        </div>
+        <div class="meta-col" style="border-left: 1px solid #86efac; padding-left: 15px;">
+          <div class="meta-row"><span class="meta-label">Supplier Name:</span><span class="meta-value" style="font-size: 11px; color: #0369a1;">${po.supplierName}</span></div>
+          <div class="meta-row"><span class="meta-label">Receiver Name:</span><span class="meta-value" style="color: #047857;">${staffName}</span></div>
+          <div class="meta-row"><span class="meta-label">Payment Status:</span><span class="meta-value" style="color: ${po.paymentStatus === 'Paid' ? '#16a34a' : '#dc2626'};">${po.paymentStatus || 'Paid'}</span></div>
+          <div class="meta-row"><span class="meta-label">Intake Status:</span><span class="meta-value"><span class="badge-received">✓ VERIFIED & RECEIVED IN STOCK</span></span></div>
+        </div>
       </div>
 
       <table>
         <thead>
           <tr>
             <th class="tick-box-cell">[ ✓ ] Rec'd</th>
-            <th>Item Name & Description</th>
+            <th>Item Description</th>
             <th>Category</th>
+            <th>Target Location</th>
             <th class="text-center">Ordered Qty</th>
-            <th class="text-center" style="width: 20%;">Unit Cost (RWF)</th>
-            <th class="text-center" style="width: 22%;">Total Amount (RWF)</th>
+            <th class="text-center">Verified Received Qty</th>
+            <th class="text-right">Unit Price (RWF)</th>
+            <th class="text-right">Total Received Value</th>
           </tr>
         </thead>
         <tbody>
-          ${po.items.map(item => `
-            <tr>
-              <td class="tick-box-cell">
-                <div class="tick-box">${isReceived ? '✓' : '&nbsp;'}</div>
-              </td>
-              <td>
-                <strong style="font-size: 11px; color: #0f172a;">${item.itemName}</strong>
-              </td>
-              <td style="color: #475569;">${item.category}</td>
-              <td class="text-center" style="font-weight: 900; font-size: 12px;">${item.quantity}</td>
-              <td class="text-center">
-                <div style="border-bottom: 1.5px dashed #94a3b8; height: 18px; width: 85%; margin: 2px auto;"></div>
-              </td>
-              <td class="text-center">
-                <div style="border-bottom: 1.5px dashed #94a3b8; height: 18px; width: 85%; margin: 2px auto;"></div>
-              </td>
-            </tr>
-          `).join('')}
+          ${po.items.map(item => {
+            const recQty = item.receivedQuantity !== undefined ? item.receivedQuantity : item.quantity;
+            const lineTotal = recQty * item.unitCost;
+            return `
+              <tr>
+                <td class="tick-box-cell">
+                  <div class="tick-box">✓</div>
+                </td>
+                <td>
+                  <strong style="font-size: 11px; color: #0f172a;">${item.itemName}</strong>
+                </td>
+                <td style="color: #475569;">${item.category}</td>
+                <td style="color: #047857; font-weight: 700;">${item.destination}</td>
+                <td class="text-center" style="color: #64748b;">${item.quantity}</td>
+                <td class="text-center" style="font-weight: 900; font-size: 12px; color: #16a34a;">${recQty}</td>
+                <td class="text-right">${item.unitCost ? item.unitCost.toLocaleString() : '0'}</td>
+                <td class="text-right" style="font-weight: 800; color: #0f172a;">${lineTotal.toLocaleString()} RWF</td>
+              </tr>
+            `;
+          }).join('')}
           <tr class="total-row">
-            <td colspan="3">TOTAL ORDERED ITEMS (${po.items.length} items)</td>
+            <td colspan="4">TOTAL VERIFIED INTAKE (${po.items.length} items)</td>
             <td class="text-center">${po.items.reduce((acc, i) => acc + i.quantity, 0)} units</td>
-            <td class="text-center"><span style="font-size: 9px; color: #64748b;">(Manual Pen Fill)</span></td>
-            <td class="text-center"><span style="font-size: 9px; color: #64748b;">(Manual Pen Fill)</span></td>
+            <td class="text-center" style="color: #16a34a; font-size: 12px;">${po.items.reduce((acc, i) => acc + (i.receivedQuantity !== undefined ? i.receivedQuantity : i.quantity), 0)} units</td>
+            <td></td>
+            <td class="text-right" style="font-weight: 900; color: #16a34a; font-size: 12px;">
+              ${po.items.reduce((acc, i) => acc + ((i.receivedQuantity !== undefined ? i.receivedQuantity : i.quantity) * i.unitCost), 0).toLocaleString()} RWF
+            </td>
           </tr>
         </tbody>
       </table>
 
       ${po.notes ? `
-        <div class="notes-section">
-          <strong>Order Reference / Invoice Notes:</strong> ${po.notes}
+        <div style="border: 1px solid #86efac; border-radius: 6px; padding: 8px 12px; margin-bottom: 15px; font-size: 10px; background: #f0fdf4;">
+          <strong>Receiving Notes / Delivery Remarks:</strong> ${po.notes}
         </div>
       ` : ''}
 
       <div class="signatures-grid">
         <div class="sig-block">
-          <div class="sig-title">Supplier / Delivery Driver</div>
+          <div class="sig-title">Delivered By (Supplier Representative)</div>
           <div class="sig-line"></div>
           <div class="sig-label">Name, Signature & Phone</div>
         </div>
         <div class="sig-block">
-          <div class="sig-title">Storekeeper / Receiver</div>
+          <div class="sig-title">Received & Inspected By</div>
           <div class="sig-line"></div>
-          <div class="sig-label">Name: ${staffName}</div>
+          <div class="sig-label">${staffName} (Storekeeper)</div>
         </div>
         <div class="sig-block">
-          <div class="sig-title">Manager Approval</div>
+          <div class="sig-title">Verified By Audit / Manager</div>
           <div class="sig-line"></div>
-          <div class="sig-label">Authorized Signature & Stamp</div>
+          <div class="sig-label">Authorized Stamp & Signature</div>
         </div>
       </div>
     `;
 
-    printReportHTML(`Receiving Voucher ${po.poNumber}`, html);
+    printReportHTML(`GRN_${po.poNumber}`, html);
+  };
+
+  const handlePrintSinglePO = (po: PurchaseOrder) => {
+    if (po.status === 'Received' || po.status === 'Partially Received') {
+      handlePrintGoodsReceivedNote(po);
+    } else {
+      handlePrintLPO(po);
+    }
   };
 
   // Open Stock Transfer Modal
@@ -2204,7 +2402,65 @@ export const StockManagement: React.FC<StockManagementProps> = ({
             })()}
           </div>
 
-          <div className={`p-5 rounded-2xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+          {/* PURCHASE ORDERS LIST WITH FILTER TABS */}
+          <div className={`p-5 rounded-2xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} space-y-4`}>
+            {/* Sub-Tab Filter Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-gray-200 dark:border-gray-800">
+              <div className="flex items-center space-x-1.5 bg-gray-100 dark:bg-slate-800/80 p-1 rounded-xl border border-gray-200 dark:border-slate-700/60">
+                <button
+                  type="button"
+                  onClick={() => setPoTabFilter('pending')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 ${
+                    poTabFilter === 'pending'
+                      ? 'bg-amber-500 text-slate-950 shadow-md'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>⏳ Ordered (Pending Intake)</span>
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/20 font-bold">
+                    {purchaseOrders.filter(p => p.status === 'Pending' || p.status === 'Partially Received').length}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPoTabFilter('received')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 ${
+                    poTabFilter === 'received'
+                      ? 'bg-emerald-500 text-slate-950 shadow-md'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>✓ Received Goods (History)</span>
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/20 font-bold">
+                    {purchaseOrders.filter(p => p.status === 'Received').length}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPoTabFilter('all')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 ${
+                    poTabFilter === 'all'
+                      ? 'bg-indigo-600 text-white shadow-md'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>📋 All Orders</span>
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/20 font-bold">
+                    {purchaseOrders.length}
+                  </span>
+                </button>
+              </div>
+
+              <div className="text-xs text-gray-400 font-medium">
+                {poTabFilter === 'pending' && 'Displaying pending supplier deliveries awaiting physical intake.'}
+                {poTabFilter === 'received' && 'Displaying fully received and accepted purchase orders.'}
+                {poTabFilter === 'all' && 'Displaying total purchase orders history.'}
+              </div>
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead>
@@ -2220,27 +2476,49 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {purchaseOrders.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="py-8 text-center text-gray-400">
-                        No purchase orders recorded yet. Click "+ New Purchase Order" to create one.
-                      </td>
-                    </tr>
-                  ) : (
-                    purchaseOrders.map(po => (
+                  {(() => {
+                    const filteredPOs = purchaseOrders.filter(po => {
+                      if (poTabFilter === 'pending') return po.status === 'Pending' || po.status === 'Partially Received';
+                      if (poTabFilter === 'received') return po.status === 'Received';
+                      return true;
+                    });
+
+                    if (filteredPOs.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={8} className="py-8 text-center text-gray-400 font-medium">
+                            {poTabFilter === 'pending'
+                              ? '✓ All ordered items have been received! No pending deliveries waiting for intake.'
+                              : poTabFilter === 'received'
+                              ? 'No received goods records found in history yet.'
+                              : 'No purchase orders recorded yet. Click "+ New Purchase Order" to create one.'}
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return filteredPOs.map(po => (
                       <tr key={po.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                         <td className="py-3 px-3 font-bold text-gray-900 dark:text-white">
-                          <div>{po.poNumber}</div>
+                          <div className="text-sky-400">{po.poNumber}</div>
                           <div className="text-[10px] text-gray-400">{po.date}</div>
                         </td>
-                        <td className="py-3 px-3 font-bold text-sky-400">{po.supplierName}</td>
+                        <td className="py-3 px-3 font-bold text-white">{po.supplierName}</td>
                         <td className="py-3 px-3 font-medium text-gray-300">{po.department}</td>
-                        <td className="py-3 px-3">
-                          {po.items.map((it, idx) => (
-                            <div key={idx} className="font-bold text-gray-800 dark:text-gray-200">
-                              {it.itemName} ({it.quantity} @ {formatCurrency(it.unitCost)})
-                            </div>
-                          ))}
+                        <td className="py-3 px-3 space-y-0.5">
+                          {po.items.map((it, idx) => {
+                            const recQty = it.receivedQuantity !== undefined ? it.receivedQuantity : (it.received ? it.quantity : 0);
+                            return (
+                              <div key={idx} className="font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
+                                <span>• {it.itemName} ({it.quantity} ordered @ {formatCurrency(it.unitCost)})</span>
+                                {po.status !== 'Pending' && (
+                                  <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${recQty >= it.quantity ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                                    Rec'd: {recQty}/{it.quantity}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
                         </td>
                         <td className="py-3 px-3 font-bold text-indigo-400">
                           {po.items[0]?.destination || 'Store'}
@@ -2252,65 +2530,88 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                           <span className={`px-2.5 py-1 rounded-full text-[10px] font-black ${
                             po.status === 'Received'
                               ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                              : po.status === 'Partially Received'
+                              ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
                               : po.status === 'Cancelled'
                               ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
                               : 'bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse'
                           }`}>
-                            {po.status === 'Received' ? '✓ Received (Stock Gained)' : po.status === 'Cancelled' ? '🚫 Cancelled' : '⏳ Pending Acceptance'}
+                            {po.status === 'Received'
+                              ? '✓ Received (In Stock)'
+                              : po.status === 'Partially Received'
+                              ? '⚡ Partially Received'
+                              : po.status === 'Cancelled'
+                              ? '🚫 Cancelled'
+                              : '⏳ Ordered (Pending Intake)'}
                           </span>
                         </td>
                         <td className="py-3 px-3 text-right">
-                          <div className="flex justify-end items-center gap-1.5">
-                            {po.status === 'Pending' && (
-                              <>
-                                <button
-                                  onClick={() => {
-                                    if (confirm(`Accept & Receive Purchase Order #${po.poNumber} (${po.supplierName})?\n\nThis will automatically update the current stock in ${po.items[0]?.destination || 'inventory'}.`)) {
-                                      onReceivePurchaseOrder && onReceivePurchaseOrder(po.id);
-                                    }
-                                  }}
-                                  className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[11px] inline-flex items-center space-x-1 shadow-md transition-all cursor-pointer"
-                                  title="Accept order and intake stock into inventory"
-                                >
-                                  <CheckCircle2 className="w-3.5 h-3.5" />
-                                  <span>Receive</span>
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    if (confirm(`Cancel Purchase Order #${po.poNumber}?`)) {
-                                      onEditPurchaseOrder && onEditPurchaseOrder(po.id, { status: 'Cancelled' });
-                                    }
-                                  }}
-                                  className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-bold text-[11px] inline-flex items-center space-x-1 border border-amber-500/30 transition-all cursor-pointer"
-                                  title="Cancel purchase order"
-                                >
-                                  <span>Cancel PO</span>
-                                </button>
-                              </>
+                          <div className="flex justify-end items-center gap-1.5 flex-wrap">
+                            {(po.status === 'Pending' || po.status === 'Partially Received') && (
+                              <button
+                                onClick={() => openReceiveModal(po)}
+                                className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[11px] inline-flex items-center space-x-1 shadow-md transition-all cursor-pointer"
+                                title="Accept & receive products with tickboxes"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Accept & Receive</span>
+                              </button>
                             )}
+
+                            {/* LPO / Order Print button */}
                             <button
-                              onClick={() => handlePrintSinglePO(po)}
-                              className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
-                              title="Print physical Goods Receiving Voucher with pen tick boxes"
+                              onClick={() => handlePrintLPO(po)}
+                              className="px-2.5 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-500 text-white font-bold text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
+                              title="Print Local Purchase Order (LPO) / Order Requisition"
                             >
                               <Printer className="w-3.5 h-3.5" />
-                              <span>Print Voucher</span>
+                              <span>Print LPO</span>
                             </button>
+
+                            {/* Goods Received Note (GRN) button */}
+                            <button
+                              onClick={() => handlePrintGoodsReceivedNote(po)}
+                              className={`px-2.5 py-1.5 rounded-lg font-bold text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer ${
+                                po.status === 'Received' || po.status === 'Partially Received'
+                                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                  : 'bg-gray-700/60 hover:bg-gray-700 text-gray-300 border border-gray-600'
+                              }`}
+                              title={po.status === 'Pending' ? "Cannot print GRN until order is received into stock" : "Print Official Goods Received Note (GRN)"}
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              <span>Print GRN</span>
+                            </button>
+
                             <button
                               onClick={() => openEditPOModal(po)}
                               className="px-2.5 py-1.5 rounded-lg bg-sky-600/80 hover:bg-sky-500 text-white font-bold text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
                               title="Edit purchase order details"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
-                              <span>Edit PO</span>
+                              <span>Edit</span>
                             </button>
+
+                            {po.status === 'Pending' && (
+                              <button
+                                onClick={() => {
+                                  if (confirm(`Cancel Purchase Order #${po.poNumber}?`)) {
+                                    onEditPurchaseOrder && onEditPurchaseOrder(po.id, { status: 'Cancelled' });
+                                  }
+                                }}
+                                className="px-2 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-bold text-[11px] border border-amber-500/30 transition-all cursor-pointer"
+                                title="Cancel purchase order"
+                              >
+                                <span>Cancel</span>
+                              </button>
+                            )}
+
                             <button
                               onClick={() => {
                                 if (confirm(`Are you sure you want to permanently delete purchase order "${po.poNumber}"?`)) {
                                   onDeletePurchaseOrder && onDeletePurchaseOrder(po.id);
                                 }
                               }}
-                              className="px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 font-bold text-[11px] inline-flex items-center space-x-1 border border-rose-500/30 transition-all cursor-pointer"
+                              className="px-2 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 font-bold text-[11px] border border-rose-500/30 transition-all cursor-pointer"
                               title="Delete purchase order"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -2318,8 +2619,8 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                           </div>
                         </td>
                       </tr>
-                    ))
-                  )}
+                    ));
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -3872,6 +4173,225 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                 >
                   <Check className="w-4 h-4" />
                   <span>Save & Record Kitchen Stock</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ACCEPT & RECEIVE GOODS INTAKE CHECKLIST MODAL */}
+      {showReceiveModal && receivingPo && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className={`max-w-3xl w-full rounded-2xl p-6 border shadow-2xl space-y-5 my-8 ${
+            darkMode ? 'bg-slate-900 border-emerald-500/30 text-white' : 'bg-white border-slate-200 text-gray-900'
+          }`}>
+            <div className="flex justify-between items-center pb-3 border-b border-gray-200 dark:border-gray-800">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-black text-lg text-emerald-400 flex items-center gap-2">
+                    <span>Accept & Receive Goods Intake</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">
+                      PO #{receivingPo.poNumber}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-gray-400">
+                    Tick delivered products and verify received quantities to intake into inventory stock.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowReceiveModal(false)}
+                className="text-gray-400 hover:text-white font-bold text-2xl cursor-pointer"
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmReceiveGoods} className="space-y-4">
+              {/* Order Info Banner */}
+              <div className="p-3.5 rounded-xl bg-slate-800/80 border border-slate-700/80 text-xs grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <span className="text-gray-400 block text-[10px]">Supplier:</span>
+                  <span className="font-bold text-sky-400">{receivingPo.supplierName}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400 block text-[10px]">Department:</span>
+                  <span className="font-bold text-gray-200">{receivingPo.department}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400 block text-[10px]">Payment Status:</span>
+                  <span className={`font-bold ${receivingPo.paymentStatus === 'Paid' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {receivingPo.paymentStatus || 'Paid'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400 block text-[10px]">Order Date:</span>
+                  <span className="font-bold text-gray-200">{receivingPo.date}</span>
+                </div>
+              </div>
+
+              {/* Receiver Staff Name */}
+              <div>
+                <label className="block text-xs font-bold text-emerald-400 mb-1">
+                  Received By (Storekeeper / Staff Name)
+                </label>
+                <input
+                  type="text"
+                  value={receivingReceiverName}
+                  onChange={(e) => setReceivingReceiverName(e.target.value)}
+                  className={`w-full p-2.5 rounded-xl border text-xs font-bold ${
+                    darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
+                  }`}
+                  placeholder="Enter Storekeeper / Receiver name"
+                  required
+                />
+              </div>
+
+              {/* Item Checklist Table */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-bold text-gray-300">
+                    Tick Received Products & Verify Delivered Quantities:
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allTicked = receivingItems.every(i => i.ticked);
+                      setReceivingItems(receivingItems.map(i => ({ ...i, ticked: !allTicked })));
+                    }}
+                    className="text-[11px] font-bold text-emerald-400 hover:underline cursor-pointer"
+                  >
+                    {receivingItems.every(i => i.ticked) ? 'Deselect All' : 'Select / Tick All Items'}
+                  </button>
+                </div>
+
+                <div className="border border-slate-700 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="bg-slate-800 text-gray-300 font-bold border-b border-slate-700 text-[11px]">
+                        <th className="py-2.5 px-3 text-center w-12">[ ✓ ]</th>
+                        <th className="py-2.5 px-3">Item Description</th>
+                        <th className="py-2.5 px-3">Destination</th>
+                        <th className="py-2.5 px-3 text-center">Ordered</th>
+                        <th className="py-2.5 px-3 text-center w-28">Received Qty</th>
+                        <th className="py-2.5 px-3 text-right w-28">Unit Cost (RWF)</th>
+                        <th className="py-2.5 px-3 text-right">Line Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {receivingItems.map((item, index) => {
+                        const lineTotal = (item.ticked ? item.receivedQty : 0) * item.unitCost;
+                        return (
+                          <tr key={item.itemId} className={`transition-colors ${item.ticked ? 'bg-emerald-500/10' : 'opacity-60 bg-slate-900'}`}>
+                            <td className="py-2.5 px-3 text-center">
+                              <input
+                                type="checkbox"
+                                checked={item.ticked}
+                                onChange={(e) => {
+                                  const updated = [...receivingItems];
+                                  updated[index].ticked = e.target.checked;
+                                  setReceivingItems(updated);
+                                }}
+                                className="w-4 h-4 text-emerald-500 rounded border-slate-700 focus:ring-emerald-500 cursor-pointer"
+                              />
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <strong className="block text-white font-bold">{item.itemName}</strong>
+                              <span className="text-[10px] text-gray-400">{item.category}</span>
+                            </td>
+                            <td className="py-2.5 px-3 font-bold text-indigo-400">
+                              {item.destination}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-bold text-gray-300">
+                              {item.quantity}
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <input
+                                type="number"
+                                min="0"
+                                max={item.quantity * 2}
+                                value={item.receivedQty}
+                                disabled={!item.ticked}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  const updated = [...receivingItems];
+                                  updated[index].receivedQty = val;
+                                  setReceivingItems(updated);
+                                }}
+                                className={`w-20 px-2 py-1 rounded-lg border text-center font-bold text-xs ${
+                                  item.ticked
+                                    ? 'bg-slate-800 border-emerald-500 text-emerald-300'
+                                    : 'bg-slate-950 border-slate-800 text-gray-500'
+                                }`}
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 text-right">
+                              <input
+                                type="number"
+                                min="0"
+                                value={item.unitCost}
+                                disabled={!item.ticked}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  const updated = [...receivingItems];
+                                  updated[index].unitCost = val;
+                                  setReceivingItems(updated);
+                                }}
+                                className={`w-24 px-2 py-1 rounded-lg border text-right font-bold text-xs ${
+                                  item.ticked
+                                    ? 'bg-slate-800 border-slate-600 text-white'
+                                    : 'bg-slate-950 border-slate-800 text-gray-500'
+                                }`}
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-black text-white">
+                              {formatCurrency(lineTotal)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-slate-800/90 font-black text-xs border-t border-slate-700">
+                        <td colSpan={3} className="py-2.5 px-3 text-gray-300">
+                          TOTAL INTAKE VALUE ({receivingItems.filter(i => i.ticked).length} items ticked)
+                        </td>
+                        <td className="py-2.5 px-3 text-center text-gray-400">
+                          {receivingItems.reduce((acc, i) => acc + i.quantity, 0)} ordered
+                        </td>
+                        <td className="py-2.5 px-3 text-center text-emerald-400">
+                          {receivingItems.reduce((acc, i) => acc + (i.ticked ? Number(i.receivedQty) : 0), 0)} received
+                        </td>
+                        <td></td>
+                        <td className="py-2.5 px-3 text-right text-emerald-400 text-sm">
+                          {formatCurrency(receivingItems.reduce((acc, i) => acc + ((i.ticked ? Number(i.receivedQty) : 0) * i.unitCost), 0))}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex space-x-3 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowReceiveModal(false)}
+                  className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-gray-300 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-2 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 cursor-pointer flex items-center justify-center space-x-2"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Accept & Intake Received Stock Into Inventory</span>
                 </button>
               </div>
             </form>
