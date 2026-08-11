@@ -159,7 +159,7 @@ export const StockManagement: React.FC<StockManagementProps> = ({
   const [editPoSupplier, setEditPoSupplier] = useState<string>('');
   const [editPoDepartment, setEditPoDepartment] = useState<'Bar / Beverage' | 'Kitchen'>('Bar / Beverage');
   const [editPoPaymentStatus, setEditPoPaymentStatus] = useState<'Paid' | 'Unpaid'>('Paid');
-  const [editPoStatus, setEditPoStatus] = useState<'Pending' | 'Received'>('Pending');
+  const [editPoStatus, setEditPoStatus] = useState<'Pending' | 'Partially Received' | 'Received' | 'Cancelled'>('Pending');
   const [editPoNotes, setEditPoNotes] = useState<string>('');
   const [editPoItems, setEditPoItems] = useState<{ itemId: string; itemName: string; category: string; quantity: number; unitCost: number; totalCost: number; destination: 'Main Beverage Stock' | 'Bar Stock' | 'Kitchen Stock' }[]>([]);
 
@@ -667,16 +667,20 @@ export const StockManagement: React.FC<StockManagementProps> = ({
     setReceivingPo(po);
     setReceivingReceiverName(loggedInUser?.fullName || 'Storekeeper');
     setReceivingNotes(po.notes || '');
-    setReceivingItems(po.items.map(it => ({
-      itemId: it.itemId,
-      itemName: it.itemName,
-      category: it.category,
-      quantity: it.quantity,
-      receivedQty: it.receivedQuantity !== undefined && it.receivedQuantity > 0 ? it.receivedQuantity : it.quantity,
-      unitCost: it.unitCost,
-      destination: it.destination,
-      ticked: it.received !== undefined ? !it.received : true
-    })));
+    setReceivingItems(po.items.map(it => {
+      const prevRec = it.receivedQuantity || 0;
+      const remainingQty = Math.max(0, it.quantity - prevRec);
+      return {
+        itemId: it.itemId,
+        itemName: it.itemName,
+        category: it.category,
+        quantity: it.quantity,
+        receivedQty: remainingQty > 0 ? remainingQty : it.quantity,
+        unitCost: it.unitCost,
+        destination: it.destination,
+        ticked: false // Default to manual ticking so storekeeper manually confirms each received item
+      };
+    }));
     setShowReceiveModal(true);
   };
 
@@ -717,6 +721,29 @@ export const StockManagement: React.FC<StockManagementProps> = ({
     setEditPoNotes(po.notes || '');
     setEditPoItems([...po.items]);
     setShowEditPOModal(true);
+  };
+
+  const handleAddEditPoItem = () => {
+    setEditPoItems([
+      ...editPoItems,
+      {
+        itemId: `item-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        itemName: '',
+        category: editPoDepartment === 'Kitchen' ? 'Kitchen Store' : 'Beverages',
+        quantity: 1,
+        unitCost: 0,
+        totalCost: 0,
+        destination: editPoDepartment === 'Kitchen' ? 'Kitchen Stock' : 'Main Beverage Stock'
+      }
+    ]);
+  };
+
+  const handleRemoveEditPoItem = (index: number) => {
+    if (editPoItems.length <= 1) {
+      alert('A purchase order must have at least one item!');
+      return;
+    }
+    setEditPoItems(editPoItems.filter((_, idx) => idx !== index));
   };
 
   const handleEditPOSubmit = (e: React.FormEvent) => {
@@ -4401,31 +4428,31 @@ export const StockManagement: React.FC<StockManagementProps> = ({
 
       {/* EDIT PURCHASE ORDER CONSOLE MODAL */}
       {showEditPOModal && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className={`max-w-xl w-full rounded-2xl p-6 border shadow-2xl space-y-4 ${
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className={`max-w-3xl w-full rounded-2xl p-6 border shadow-2xl space-y-4 my-8 ${
             darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-gray-900'
           }`}>
             <div className="flex justify-between items-center pb-3 border-b border-gray-200 dark:border-gray-800">
               <div className="flex items-center space-x-2.5">
-                <div className="p-2 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/30">
+                <div className="p-2.5 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/30">
                   <Edit3 className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-black text-base">Edit Purchase Order Console</h3>
-                  <p className="text-xs text-gray-400">Modify supplier, quantities, payment status, or fulfillment status</p>
+                  <h3 className="font-black text-lg text-sky-400">Edit Purchase Order Console</h3>
+                  <p className="text-xs text-gray-400">Modify items, supplier, price per unit, quantities, or fulfillment status</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setShowEditPOModal(false)}
-                className="text-gray-400 hover:text-white font-bold text-xl cursor-pointer"
+                className="text-gray-400 hover:text-white font-bold text-2xl cursor-pointer"
               >
                 ×
               </button>
             </div>
 
             <form onSubmit={handleEditPOSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-gray-400 mb-1">
                     Supplier Name
@@ -4455,22 +4482,21 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                     <option value="Kitchen">Kitchen</option>
                   </select>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-gray-400 mb-1">
                     Fulfillment Status
                   </label>
                   <select
                     value={editPoStatus}
-                    onChange={(e) => setEditPoStatus(e.target.value as 'Pending' | 'Received')}
+                    onChange={(e) => setEditPoStatus(e.target.value as any)}
                     className={`w-full p-2.5 rounded-xl border text-xs font-bold ${
                       darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'
                     }`}
                   >
-                    <option value="Pending">⏳ Pending Acceptance</option>
+                    <option value="Pending">⏳ Ordered (Pending Intake)</option>
+                    <option value="Partially Received">⚡ Partially Received</option>
                     <option value="Received">✓ Received (Stock Gained)</option>
+                    <option value="Cancelled">🚫 Cancelled</option>
                   </select>
                 </div>
                 <div>
@@ -4491,56 +4517,109 @@ export const StockManagement: React.FC<StockManagementProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-400 mb-1">
-                  Order Items & Quantities
-                </label>
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                <div className="flex justify-between items-center mb-2">
+                  <label className="block text-xs font-bold text-gray-300">
+                    Order Items, Quantities & Unit Costs (Price per Unit)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAddEditPoItem}
+                    className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ Add Item to Order</span>
+                  </button>
+                </div>
+
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                   {editPoItems.map((item, idx) => (
-                    <div key={idx} className="p-3 rounded-xl bg-slate-800/80 border border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-xs">
-                      <div>
-                        <span className="font-bold text-white block">{item.itemName}</span>
-                        <span className="text-[10px] text-gray-400">Destination: {item.destination}</span>
+                    <div key={idx} className="p-3 rounded-xl bg-slate-800/80 border border-slate-700 grid grid-cols-1 sm:grid-cols-12 gap-2 text-xs items-center">
+                      <div className="sm:col-span-4">
+                        <span className="text-[10px] text-gray-400 block mb-0.5">Item Name</span>
+                        <input
+                          type="text"
+                          value={item.itemName}
+                          onChange={(e) => {
+                            const newItems = [...editPoItems];
+                            newItems[idx] = { ...newItems[idx], itemName: e.target.value };
+                            setEditPoItems(newItems);
+                          }}
+                          placeholder="Product / Ingredient Name"
+                          className="w-full p-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white font-bold text-xs"
+                          required
+                        />
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <div>
-                          <span className="text-[10px] text-gray-400 block">Qty</span>
-                          <input
-                            type="number"
-                            min="1"
-                            value={item.quantity}
-                            onChange={(e) => {
-                              const val = Math.max(1, parseInt(e.target.value) || 1);
-                              const newItems = [...editPoItems];
-                              newItems[idx] = { ...newItems[idx], quantity: val, totalCost: val * newItems[idx].unitCost };
-                              setEditPoItems(newItems);
-                            }}
-                            className="w-16 p-1 rounded-lg bg-slate-900 border border-slate-700 text-white font-bold text-center text-xs"
-                          />
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-gray-400 block">Unit Cost</span>
-                          <input
-                            type="number"
-                            min="0"
-                            value={item.unitCost}
-                            onChange={(e) => {
-                              const val = Math.max(0, parseInt(e.target.value) || 0);
-                              const newItems = [...editPoItems];
-                              newItems[idx] = { ...newItems[idx], unitCost: val, totalCost: newItems[idx].quantity * val };
-                              setEditPoItems(newItems);
-                            }}
-                            className="w-24 p-1 rounded-lg bg-slate-900 border border-slate-700 text-white font-bold text-center text-xs"
-                          />
-                        </div>
+                      <div className="sm:col-span-3">
+                        <span className="text-[10px] text-gray-400 block mb-0.5">Destination</span>
+                        <select
+                          value={item.destination}
+                          onChange={(e) => {
+                            const newItems = [...editPoItems];
+                            newItems[idx] = { ...newItems[idx], destination: e.target.value as any };
+                            setEditPoItems(newItems);
+                          }}
+                          className="w-full p-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white font-bold text-xs"
+                        >
+                          <option value="Main Beverage Stock">Main Beverage Stock</option>
+                          <option value="Bar Stock">Bar Stock</option>
+                          <option value="Kitchen Stock">Kitchen Stock</option>
+                        </select>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <span className="text-[10px] text-gray-400 block mb-0.5">Ordered Qty</span>
+                        <input
+                          type="number"
+                          min="1"
+                          value={item.quantity}
+                          onChange={(e) => {
+                            const val = Math.max(1, parseInt(e.target.value) || 1);
+                            const newItems = [...editPoItems];
+                            newItems[idx] = { ...newItems[idx], quantity: val, totalCost: val * newItems[idx].unitCost };
+                            setEditPoItems(newItems);
+                          }}
+                          className="w-full p-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white font-bold text-center text-xs"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <span className="text-[10px] text-gray-400 block mb-0.5">Price / Unit (RWF)</span>
+                        <input
+                          type="number"
+                          min="0"
+                          value={item.unitCost}
+                          onChange={(e) => {
+                            const val = Math.max(0, parseInt(e.target.value) || 0);
+                            const newItems = [...editPoItems];
+                            newItems[idx] = { ...newItems[idx], unitCost: val, totalCost: newItems[idx].quantity * val };
+                            setEditPoItems(newItems);
+                          }}
+                          className="w-full p-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white font-bold text-right text-xs"
+                        />
+                      </div>
+                      <div className="sm:col-span-1 text-center">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveEditPoItem(idx)}
+                          className="p-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/40 text-rose-400 cursor-pointer transition-all mt-3 sm:mt-0"
+                          title="Remove item"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
 
+              <div className="p-3 rounded-xl bg-slate-800 border border-slate-700 flex justify-between items-center text-xs">
+                <span className="text-gray-300 font-bold">Total Calculated Order Value:</span>
+                <span className="text-sky-400 font-black text-sm">
+                  {formatCurrency(editPoItems.reduce((acc, it) => acc + (it.quantity * it.unitCost), 0))}
+                </span>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-gray-400 mb-1">
-                  Order Notes / Receipt Reference
+                  Order Notes / Invoice & Receipt Reference
                 </label>
                 <input
                   type="text"
@@ -4553,33 +4632,53 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                 />
               </div>
 
-              <div className="flex space-x-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setShowEditPOModal(false)}
-                  className="px-3 py-2.5 rounded-xl bg-gray-100 dark:bg-gray-800 text-xs font-bold text-gray-700 dark:text-gray-300 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const po = purchaseOrders.find(p => p.id === editingPoId);
-                    if (po) handlePrintSinglePO(po);
-                  }}
-                  className="px-3.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center space-x-1 cursor-pointer transition-all"
-                  title="Print Goods Receiving Voucher with pen tick boxes"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>Print Voucher</span>
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-black text-xs shadow-lg shadow-sky-500/20 cursor-pointer flex items-center justify-center space-x-1"
-                >
-                  <Check className="w-4 h-4" />
-                  <span>Update Purchase Order</span>
-                </button>
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-800">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm(`Are you sure you want to permanently delete Purchase Order #${editingPoId}?`)) {
+                        onDeletePurchaseOrder && onDeletePurchaseOrder(editingPoId);
+                        setShowEditPOModal(false);
+                      }
+                    }}
+                    className="px-3 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30 text-xs font-bold cursor-pointer transition-all flex items-center space-x-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Permanently</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm(`Cancel Purchase Order #${editingPoId}?`)) {
+                        if (onEditPurchaseOrder) {
+                          onEditPurchaseOrder(editingPoId, { status: 'Cancelled' });
+                        }
+                        setShowEditPOModal(false);
+                      }
+                    }}
+                    className="px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 border border-amber-500/30 text-xs font-bold cursor-pointer transition-all"
+                  >
+                    Cancel Order
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditPOModal(false)}
+                    className="px-3.5 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 text-xs font-bold text-gray-700 dark:text-gray-300 cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-black text-xs shadow-lg shadow-sky-500/20 cursor-pointer flex items-center space-x-1"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>Save Order Changes</span>
+                  </button>
+                </div>
               </div>
             </form>
           </div>
