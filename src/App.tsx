@@ -1336,9 +1336,16 @@ export default function App() {
 
     const updatedPOs = purchaseOrders.map(p => {
       if (p.id === poId) {
+        const newItems = updatedPOData.items || p.items;
+        const newTotal = updatedPOData.totalAmount !== undefined
+          ? updatedPOData.totalAmount
+          : newItems.reduce((acc, it) => acc + (it.quantity * it.unitCost), 0);
+
         return {
           ...p,
           ...updatedPOData,
+          items: newItems,
+          totalAmount: newTotal,
           ...(isNowReceived && !wasReceived ? {
             receivedAt: new Date().toISOString(),
             receivedByName: currentUser?.fullName || 'Storekeeper'
@@ -1351,9 +1358,9 @@ export default function App() {
     setPurchaseOrders(updatedPOs);
     savePurchaseOrders(updatedPOs);
 
-    // If PO was newly marked as Received in edit, trigger stock intake
+    // If PO was newly marked as Received in edit, trigger stock intake with the updated PO list
     if (!wasReceived && isNowReceived) {
-      handleReceivePurchaseOrder(poId);
+      handleReceivePurchaseOrder(poId, undefined, currentUser?.fullName || 'Storekeeper', updatedPOs);
     } else if (currentUser) {
       addAuditLog({
         userId: currentUser.id,
@@ -1408,11 +1415,13 @@ export default function App() {
   const handleReceivePurchaseOrder = (
     poId: string, 
     receivedItemsPayload?: { itemId: string; receivedQty: number; unitCost?: number; ticked: boolean }[],
-    receiverName?: string
+    receiverName?: string,
+    overridePOList?: PurchaseOrder[]
   ) => {
-    const targetPo = purchaseOrders.find(p => p.id === poId);
+    const activePOs = overridePOList || purchaseOrders;
+    const targetPo = activePOs.find(p => p.id === poId);
     if (!targetPo) return;
-    if (targetPo.status === 'Received') {
+    if (targetPo.status === 'Received' && (!receivedItemsPayload || receivedItemsPayload.length === 0)) {
       alert('This Purchase Order has already been fully received!');
       return;
     }
@@ -1632,11 +1641,12 @@ export default function App() {
       ? 'Partially Received'
       : 'Pending';
 
-    const updatedPOs: PurchaseOrder[] = purchaseOrders.map(p => {
+    const updatedPOs: PurchaseOrder[] = activePOs.map(p => {
       if (p.id === poId) {
         return {
           ...p,
           items: updatedPoItems,
+          totalAmount: updatedPoItems.reduce((acc, it) => acc + (it.quantity * it.unitCost), 0),
           status: finalStatus,
           receivedAt: new Date().toISOString(),
           receivedByName: actualReceiver
