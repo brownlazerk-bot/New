@@ -501,9 +501,9 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
                           <td className="p-3 font-bold text-amber-500">{po.supplierName}</td>
                           <td className="p-3">{po.department}</td>
                           <td className="p-3 max-w-xs">
-                            {po.items.map(it => (
-                              <div key={it.itemId} className="text-[11px] truncate">
-                                • {it.itemName} ({it.quantity} @ RWF {it.unitCost.toLocaleString()})
+                            {(po.items || []).map(it => (
+                              <div key={it.itemId || it.itemName} className="text-[11px] truncate">
+                                • {it.itemName} ({it.quantity} @ RWF {(it.unitCost || 0).toLocaleString()})
                               </div>
                             ))}
                           </td>
@@ -605,7 +605,7 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
                         </td>
                         <td className="p-3">{ord.waiterName || ord.cashierName}</td>
                         <td className="p-3 max-w-xs truncate">
-                          {ord.items.map(i => `${i.name} (x${i.quantity})`).join(', ')}
+                          {(ord.items || []).map(i => `${i.name} (x${i.quantity})`).join(', ')}
                         </td>
                         <td className="p-3 text-right font-black text-rose-500 text-sm">
                           RWF {ord.total.toLocaleString()}
