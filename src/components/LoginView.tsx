@@ -404,6 +404,80 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, darkMode =
                   )}
                 </button>
 
+                {/* Quick Demo Logins for Fast Access */}
+                <div className="pt-3 border-t border-slate-700/60">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2 text-center">
+                    Quick Role Login (Click for Instant Portal Access)
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmail('accountant@grandhorizon.com');
+                        setPassword('Accountant@123');
+                        setTimeout(() => {
+                          const users = loadUsers();
+                          const accUser = users.find(u => u.email.toLowerCase() === 'accountant@grandhorizon.com') || INITIAL_STAFF_USERS.find(u => u.email === 'accountant@grandhorizon.com');
+                          if (accUser) handleAuthSuccess(accUser, 'Quick Accountant Demo Login');
+                        }, 100);
+                      }}
+                      className="p-2 rounded-xl bg-slate-900 border border-amber-500/30 hover:border-amber-500 text-left transition cursor-pointer group"
+                    >
+                      <div className="text-[11px] font-bold text-amber-400 group-hover:text-amber-300">Accountant Portal</div>
+                      <div className="text-[10px] text-slate-400">accountant@grandhorizon.com</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmail('manager@grandhorizon.com');
+                        setPassword('Manager@123');
+                        setTimeout(() => {
+                          const users = loadUsers();
+                          const mgrUser = users.find(u => u.email.toLowerCase() === 'manager@grandhorizon.com') || INITIAL_STAFF_USERS.find(u => u.email === 'manager@grandhorizon.com');
+                          if (mgrUser) handleAuthSuccess(mgrUser, 'Quick Manager Demo Login');
+                        }, 100);
+                      }}
+                      className="p-2 rounded-xl bg-slate-900 border border-slate-700 hover:border-amber-500 text-left transition cursor-pointer group"
+                    >
+                      <div className="text-[11px] font-bold text-emerald-400 group-hover:text-emerald-300">Manager Access</div>
+                      <div className="text-[10px] text-slate-400">manager@grandhorizon.com</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmail('yuskar@gmail.com');
+                        setPassword('Pksquare@1');
+                        setTimeout(() => {
+                          handleAuthSuccess(SUPER_ADMIN_CREDENTIALS, 'Quick Super Admin Login');
+                        }, 100);
+                      }}
+                      className="p-2 rounded-xl bg-slate-900 border border-slate-700 hover:border-amber-500 text-left transition cursor-pointer group"
+                    >
+                      <div className="text-[11px] font-bold text-purple-400 group-hover:text-purple-300">Super Admin</div>
+                      <div className="text-[10px] text-slate-400">yuskar@gmail.com</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmail('cashier@grandhorizon.com');
+                        setPassword('Cashier@123');
+                        setTimeout(() => {
+                          const users = loadUsers();
+                          const cashUser = users.find(u => u.email.toLowerCase() === 'cashier@grandhorizon.com') || INITIAL_STAFF_USERS.find(u => u.email === 'cashier@grandhorizon.com');
+                          if (cashUser) handleAuthSuccess(cashUser, 'Quick Cashier Demo Login');
+                        }, 100);
+                      }}
+                      className="p-2 rounded-xl bg-slate-900 border border-slate-700 hover:border-amber-500 text-left transition cursor-pointer group"
+                    >
+                      <div className="text-[11px] font-bold text-sky-400 group-hover:text-sky-300">POS Cashier</div>
+                      <div className="text-[10px] text-slate-400">cashier@grandhorizon.com</div>
+                    </button>
+                  </div>
+                </div>
+
                 <div className="text-center pt-2">
                   <p className="text-xs text-slate-400">
                     Don't have an account yet?{' '}

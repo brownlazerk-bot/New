@@ -126,7 +126,7 @@ export default function App() {
     const loggedInUser = loadCurrentUser();
     if (loggedInUser) {
       setCurrentUser(loggedInUser);
-      setUserRole(loggedInUser.role === 'Super Admin' || loggedInUser.role === 'Admin' || loggedInUser.role === 'Manager' ? 'Manager' : 'Cashier');
+      setUserRole(loggedInUser.role);
     }
 
     refreshAllStateFromStorage();
