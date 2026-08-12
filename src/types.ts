@@ -388,7 +388,7 @@ export interface StockAdjustmentLog {
   previousStock: number;
   newStock: number;
   sourceLocation?: 'Main Beverage Stock' | 'Bar Stock' | 'Kitchen Stock' | 'Supplier';
-  targetLocation?: 'Main Beverage Stock' | 'Bar Stock' | 'Kitchen Stock';
+  targetLocation?: 'Main Beverage Stock' | 'Bar Stock' | 'Kitchen Stock' | 'Supplier';
   reason?: string;
   timestamp: string;
   actor: string;

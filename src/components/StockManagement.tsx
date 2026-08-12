@@ -4,7 +4,7 @@ import {
   Search, RefreshCw, FileText, ArrowUpRight, ArrowDownRight, History,
   Clock, ShoppingBag, Eye, ExternalLink, ShieldAlert, CheckCircle2, AlertCircle, Layers,
   Calendar, Download, ArrowRight, Printer, CheckSquare, Square, Utensils, Wine, Filter, Check,
-  ArrowRightLeft, Store, Boxes, Truck, ArrowDownToLine, Building2, Sparkles, Lightbulb, ShoppingCart
+  ArrowRightLeft, Store, Boxes, Truck, ArrowDownToLine, Building2, Sparkles, Lightbulb, ShoppingCart, RotateCcw
 } from 'lucide-react';
 import { MenuItem, StockAdjustmentLog, Order, Table, Waiter, AppUser, PurchaseOrder, PurchaseOrderItem, KitchenIngredient, RecipeIngredient, StockMovementRecord, KitchenWasteRecord, Category } from '../types';
 import { formatCurrency } from '../lib/currency';
@@ -56,6 +56,11 @@ interface StockManagementProps {
     receivedItemsPayload?: { itemId: string; receivedQty: number; unitCost?: number; ticked: boolean }[],
     receiverName?: string
   ) => void;
+  onRevertPurchaseOrder?: (
+    poId: string,
+    revertItemIds?: string[],
+    reverterName?: string
+  ) => void;
   onEditPurchaseOrder?: (poId: string, updatedPO: Partial<PurchaseOrder>) => void;
   onDeletePurchaseOrder?: (poId: string) => void;
   onNavigateToOrders?: () => void;
@@ -89,6 +94,7 @@ export const StockManagement: React.FC<StockManagementProps> = ({
   onTransferStock,
   onCreatePurchaseOrder,
   onReceivePurchaseOrder,
+  onRevertPurchaseOrder,
   onEditPurchaseOrder,
   onDeletePurchaseOrder,
   onNavigateToOrders,
@@ -158,6 +164,27 @@ export const StockManagement: React.FC<StockManagementProps> = ({
   };
 
   const handleInlineToggleItemTick = (po: PurchaseOrder, itemIdx: number) => {
+    const targetItem = po.items[itemIdx];
+    if (!targetItem) return;
+
+    const isCurrentlyReceived = targetItem.received || (targetItem.receivedQuantity !== undefined && targetItem.receivedQuantity > 0);
+
+    if (isCurrentlyReceived) {
+      if (confirm(`Revert intake for item "${targetItem.itemName}" marked received by mistake?\n\nThis will deduct the received quantity from stock and return this item to Pending Intake.`)) {
+        if (onRevertPurchaseOrder) {
+          onRevertPurchaseOrder(po.id, [targetItem.itemId]);
+        } else if (onEditPurchaseOrder) {
+          const newItems = po.items.map((it, idx) => {
+            if (idx !== itemIdx) return it;
+            return { ...it, received: false, receivedQuantity: 0 };
+          });
+          const newTotal = newItems.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitCost || 0)), 0);
+          onEditPurchaseOrder(po.id, { items: newItems, totalAmount: newTotal });
+        }
+      }
+      return;
+    }
+
     if (!onEditPurchaseOrder) return;
     const newItems = po.items.map((it, idx) => {
       if (idx !== itemIdx) return it;
@@ -2649,6 +2676,27 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                                 </button>
                               )}
 
+                              {(po.status === 'Received' || po.status === 'Partially Received') && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (confirm(`Revert Purchase Order #${po.poNumber} back to Pending Intake?\n\nThis will deduct the received items from stock and resend the order back to Pending Intake.`)) {
+                                      if (onRevertPurchaseOrder) {
+                                        onRevertPurchaseOrder(po.id);
+                                      } else if (onEditPurchaseOrder) {
+                                        const newItems = po.items.map(it => ({ ...it, received: false, receivedQuantity: 0 }));
+                                        onEditPurchaseOrder(po.id, { status: 'Pending', items: newItems });
+                                      }
+                                    }
+                                  }}
+                                  className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs inline-flex items-center space-x-1.5 shadow-lg transition-all cursor-pointer"
+                                  title="Revert intake if marked received by mistake and resend back to pending"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  <span>Resend / Revert to Pending</span>
+                                </button>
+                              )}
+
                               <button
                                 type="button"
                                 onClick={() => handlePrintLPO(po)}
@@ -3004,6 +3052,27 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                                 >
                                   <CheckCircle2 className="w-3.5 h-3.5" />
                                   <span>Accept & Receive</span>
+                                </button>
+                              )}
+
+                              {(po.status === 'Received' || po.status === 'Partially Received') && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (confirm(`Revert Purchase Order #${po.poNumber} back to Pending Intake?\n\nThis will deduct the received items from stock and resend the order back to Pending Intake.`)) {
+                                      if (onRevertPurchaseOrder) {
+                                        onRevertPurchaseOrder(po.id);
+                                      } else if (onEditPurchaseOrder) {
+                                        const newItems = po.items.map(it => ({ ...it, received: false, receivedQuantity: 0 }));
+                                        onEditPurchaseOrder(po.id, { status: 'Pending', items: newItems });
+                                      }
+                                    }
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[11px] inline-flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
+                                  title="Revert intake if marked received by mistake and resend back to pending"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  <span>Resend / Revert</span>
                                 </button>
                               )}
 

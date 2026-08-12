@@ -11,6 +11,7 @@ import { Language, getTranslation } from '../lib/translations';
 export type TabType = 
   | 'dashboard' 
   | 'order_center'
+  | 'accountant_control'
   | 'pos' 
   | 'tables' 
   | 'kitchen' 
@@ -51,7 +52,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   darkMode,
   language = 'rw'
 }) => {
-  const isManagerOrAdmin = userRole === 'Manager' || userRole === 'Super Admin';
+  const isManagerOrAdmin = userRole === 'Manager' || userRole === 'Super Admin' || userRole === 'Admin' || userRole === 'Accountant';
   const t = getTranslation(language);
 
   const navItems = [
@@ -63,6 +64,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       badge: unpaidOrdersCount > 0 ? unpaidOrdersCount : null,
       badgeColor: 'bg-amber-500 text-white'
     },
+    { id: 'accountant_control' as TabType, label: 'Accountant Control', icon: Briefcase, managerOnly: true },
     { id: 'pos' as TabType, label: t.pos, icon: ShoppingCart },
     { id: 'tables' as TabType, label: t.tables, icon: UtensilsCrossed },
     { 

@@ -52,6 +52,7 @@ import { WhatsAppAutomationCenter } from './components/WhatsAppAutomationCenter'
 import { HRManagement } from './components/HRManagement';
 import { NotificationCenter } from './components/NotificationCenter';
 import { ApprovalWorkflowCenter } from './components/ApprovalWorkflowCenter';
+import { AccountantControlCenter } from './components/AccountantControlCenter';
 import { InAppNotificationDrawer } from './components/InAppNotificationDrawer';
 import { ManualReportSendModal } from './components/ManualReportSendModal';
 import { subscribeToSync, createDailyBackup, flushOfflineQueue } from './lib/syncEngine';
@@ -229,11 +230,7 @@ export default function App() {
 
   const handleLoginSuccess = (user: AppUser) => {
     setCurrentUser(user);
-    if (user.role === 'Super Admin' || user.role === 'Admin' || user.role === 'Manager') {
-      setUserRole('Manager');
-    } else {
-      setUserRole('Cashier');
-    }
+    setUserRole(user.role as any);
   };
 
   const handleLogout = () => {
@@ -1675,6 +1672,201 @@ export default function App() {
     }
   };
 
+  // Revert / Un-receive Purchase Order (Reverses stock additions if marked received by mistake)
+  const handleRevertPurchaseOrder = (
+    poId: string,
+    revertItemIds?: string[],
+    reverterName?: string
+  ) => {
+    const targetPo = purchaseOrders.find(p => p.id === poId);
+    if (!targetPo) return;
+
+    let updatedMenuItems = [...menuItems];
+    let updatedIngredients = loadIngredients();
+    let newLogs: StockAdjustmentLog[] = [...stockLogs];
+    let newMovements: StockMovementRecord[] = loadStockMovementRecords();
+
+    const actualReverter = reverterName || currentUser?.fullName || 'Storekeeper';
+
+    const updatedPoItems = targetPo.items.map(poItem => {
+      const shouldRevert = !revertItemIds || revertItemIds.length === 0 || revertItemIds.includes(poItem.itemId) || revertItemIds.includes(poItem.itemName);
+      if (!shouldRevert) return poItem;
+
+      const qtyToRevert = poItem.receivedQuantity !== undefined ? poItem.receivedQuantity : (poItem.received ? poItem.quantity : 0);
+
+      if (qtyToRevert > 0) {
+        // Reverse Kitchen Raw Ingredient stock if applicable
+        const ingIdx = updatedIngredients.findIndex(g => 
+          g.id === poItem.itemId || 
+          g.name.toLowerCase() === poItem.itemName.toLowerCase() ||
+          poItem.itemId.startsWith('ing-')
+        );
+
+        if (ingIdx > -1) {
+          const ing = updatedIngredients[ingIdx];
+          const prevStock = ing.stockQuantity || 0;
+          const newStock = Math.max(0, prevStock - qtyToRevert);
+          updatedIngredients[ingIdx] = {
+            ...ing,
+            stockQuantity: newStock
+          };
+
+          const now = new Date();
+          newMovements.unshift({
+            id: `mvt-po-rev-${Date.now()}-${poItem.itemId}`,
+            date: now.toISOString().split('T')[0],
+            time: now.toTimeString().split(' ')[0],
+            timestamp: now.toISOString(),
+            ingredientId: ing.id,
+            ingredientName: ing.name,
+            department: 'Kitchen',
+            movementType: 'Supplier Return',
+            quantityIn: 0,
+            quantityOut: qtyToRevert,
+            remainingBalance: newStock,
+            unit: ing.unit || 'units',
+            cost: qtyToRevert * (poItem.unitCost || 0),
+            referenceNumber: targetPo.poNumber || targetPo.id,
+            user: actualReverter,
+            notes: `REVERTED PO #${targetPo.poNumber} intake marked received by mistake`
+          });
+
+          newLogs.unshift({
+            id: `log-po-ing-rev-${Date.now()}-${poItem.itemId}`,
+            itemId: ing.id,
+            itemName: ing.name,
+            type: 'Return',
+            quantityChange: -qtyToRevert,
+            previousStock: prevStock,
+            newStock: newStock,
+            sourceLocation: 'Kitchen Stock',
+            targetLocation: 'Supplier',
+            reason: `Reverted mistaken intake for PO #${targetPo.poNumber} (${targetPo.supplierName})`,
+            timestamp: new Date().toISOString(),
+            actor: actualReverter
+          });
+        } else {
+          // Check if item matches a Menu Item (Beverage or Dish)
+          const menuIdx = updatedMenuItems.findIndex(m => 
+            m.id === poItem.itemId || 
+            m.name.toLowerCase() === poItem.itemName.toLowerCase()
+          );
+
+          if (menuIdx > -1) {
+            const item = updatedMenuItems[menuIdx];
+
+            if (poItem.destination === 'Main Beverage Stock') {
+              const prevMain = item.mainStockQuantity || 0;
+              const newMain = Math.max(0, prevMain - qtyToRevert);
+              updatedMenuItems[menuIdx] = {
+                ...item,
+                mainStockQuantity: newMain
+              };
+              newLogs.unshift({
+                id: `log-po-rev-${Date.now()}-${poItem.itemId}`,
+                itemId: item.id,
+                itemName: item.name,
+                type: 'Return',
+                quantityChange: -qtyToRevert,
+                previousStock: prevMain,
+                newStock: newMain,
+                sourceLocation: 'Main Beverage Stock',
+                targetLocation: 'Supplier',
+                reason: `Reverted mistaken intake to Main Beverage Stock (PO #${targetPo.poNumber})`,
+                timestamp: new Date().toISOString(),
+                actor: actualReverter
+              });
+            } else if (poItem.destination === 'Bar Stock') {
+              const prevBar = item.stockQuantity || 0;
+              const newBar = Math.max(0, prevBar - qtyToRevert);
+              updatedMenuItems[menuIdx] = {
+                ...item,
+                stockQuantity: newBar,
+                status: newBar > 0 ? 'Available' : 'Out of Stock'
+              };
+              newLogs.unshift({
+                id: `log-po-rev-${Date.now()}-${poItem.itemId}`,
+                itemId: item.id,
+                itemName: item.name,
+                type: 'Return',
+                quantityChange: -qtyToRevert,
+                previousStock: prevBar,
+                newStock: newBar,
+                sourceLocation: 'Bar Stock',
+                targetLocation: 'Supplier',
+                reason: `Reverted mistaken intake to Bar Stock (PO #${targetPo.poNumber})`,
+                timestamp: new Date().toISOString(),
+                actor: actualReverter
+              });
+            } else {
+              // Kitchen Stock
+              const prevKitchen = item.stockQuantity || 0;
+              const newKitchen = Math.max(0, prevKitchen - qtyToRevert);
+              updatedMenuItems[menuIdx] = {
+                ...item,
+                stockQuantity: newKitchen,
+                status: newKitchen > 0 ? 'Available' : 'Out of Stock'
+              };
+              newLogs.unshift({
+                id: `log-po-rev-${Date.now()}-${poItem.itemId}`,
+                itemId: item.id,
+                itemName: item.name,
+                type: 'Return',
+                quantityChange: -qtyToRevert,
+                previousStock: prevKitchen,
+                newStock: newKitchen,
+                sourceLocation: 'Kitchen Stock',
+                targetLocation: 'Supplier',
+                reason: `Reverted mistaken intake to Kitchen Stock (PO #${targetPo.poNumber})`,
+                timestamp: new Date().toISOString(),
+                actor: actualReverter
+              });
+            }
+          }
+        }
+      }
+
+      return {
+        ...poItem,
+        receivedQuantity: 0,
+        received: false
+      };
+    });
+
+    const anyRemainingReceived = updatedPoItems.some(i => (i.receivedQuantity || 0) > 0 || i.received);
+    const newStatus: 'Pending' | 'Partially Received' | 'Received' = anyRemainingReceived ? 'Partially Received' : 'Pending';
+
+    const updatedPOs: PurchaseOrder[] = purchaseOrders.map(p => {
+      if (p.id === poId) {
+        return {
+          ...p,
+          items: updatedPoItems,
+          status: newStatus
+        };
+      }
+      return p;
+    });
+
+    setPurchaseOrders(updatedPOs);
+    savePurchaseOrders(updatedPOs);
+    updateIngredientsState(updatedIngredients);
+    saveStockMovementRecords(newMovements);
+    updateMenuItemsState(updatedMenuItems);
+    updateStockLogsState(newLogs);
+
+    if (currentUser) {
+      addAuditLog({
+        userId: currentUser.id,
+        userName: currentUser.fullName,
+        userRole: currentUser.role,
+        userEmail: currentUser.email,
+        action: 'Reverted Purchase Order Intake',
+        category: 'Inventory',
+        details: `Reverted mistaken intake for PO #${targetPo.poNumber} (${targetPo.supplierName}). Stock deducted accordingly.`
+      });
+    }
+  };
+
   // Open New Shift
   const handleOpenShift = (cashierName: string, openingCash: number, customBusinessDate?: string) => {
     const maxShiftNum = shifts.reduce((max, s) => Math.max(max, s.shiftNumber || 0), 249);
@@ -2062,6 +2254,23 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'accountant_control' && (
+          <AccountantControlCenter
+            orders={orders}
+            menuItems={menuItems}
+            purchaseOrders={purchaseOrders}
+            expenses={expenses}
+            cashMovements={cashMovements}
+            allShifts={shifts}
+            currentUser={currentUser}
+            onAddExpense={handleAddExpense}
+            onAddCashMovement={handleAddCashMovement}
+            onEditPurchaseOrder={handleEditPurchaseOrder}
+            onUpdateOrder={handleUpdateOrder}
+            darkMode={darkMode}
+          />
+        )}
+
         {activeTab === 'pos' && (
           <PosTerminal
             menuItems={menuItems}
@@ -2183,6 +2392,7 @@ export default function App() {
             onTransferStock={handleTransferStock}
             onCreatePurchaseOrder={handleCreatePurchaseOrder}
             onReceivePurchaseOrder={handleReceivePurchaseOrder}
+            onRevertPurchaseOrder={handleRevertPurchaseOrder}
             onEditPurchaseOrder={handleEditPurchaseOrder}
             onDeletePurchaseOrder={handleDeletePurchaseOrder}
             onNavigateToOrders={() => setActiveTab('order_center')}
@@ -2242,7 +2452,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'products_services' && (userRole === 'Manager' || userRole === 'Super Admin') && (
+        {activeTab === 'products_services' && (userRole === 'Manager' || userRole === 'Super Admin' || userRole === 'Admin' || userRole === 'Accountant') && (
           <ProductServiceManager
             menuItems={menuItems}
             onSaveMenuItem={handleSaveMenuItem}
@@ -2251,20 +2461,20 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'users' && (userRole === 'Manager' || userRole === 'Super Admin') && (
+        {activeTab === 'users' && (userRole === 'Manager' || userRole === 'Super Admin' || userRole === 'Admin' || userRole === 'Accountant') && (
           <UserManagement
             currentUser={currentUser}
             darkMode={darkMode}
           />
         )}
 
-        {activeTab === 'audit_logs' && (userRole === 'Manager' || userRole === 'Super Admin') && (
+        {activeTab === 'audit_logs' && (userRole === 'Manager' || userRole === 'Super Admin' || userRole === 'Admin' || userRole === 'Accountant') && (
           <AuditLogView
             darkMode={darkMode}
           />
         )}
 
-        {activeTab === 'settings' && (userRole === 'Manager' || userRole === 'Super Admin') && (
+        {activeTab === 'settings' && (userRole === 'Manager' || userRole === 'Super Admin' || userRole === 'Admin' || userRole === 'Accountant') && (
           <ManagerSettings
             menuItems={menuItems}
             waiters={waiters}
