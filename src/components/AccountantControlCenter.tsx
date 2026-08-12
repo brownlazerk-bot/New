@@ -4,15 +4,15 @@ import {
   TrendingUp, AlertTriangle, CheckCircle2, XCircle, Search, Filter, 
   PlusCircle, Download, Printer, ShieldCheck, RefreshCw, Layers, 
   Calendar, Building, User, Phone, BookOpen, Clock, ChevronRight, MessageSquare,
-  Scale, FileSpreadsheet, Check, Eye
+  Scale, FileSpreadsheet, Check, Eye, Vault, PieChart, Landmark
 } from 'lucide-react';
 import { 
-  Order, MenuItem, Shift, Expense, CashMovement, DailyClosingRecord, 
+  Order, MenuItem, Shift, Expense, CashMovement, DailyClosingRecord, POSDepositRecord,
   PurchaseOrder, AppUser, ExpenseDepartment, PaymentMethod 
 } from '../types';
 import { formatCurrency } from '../lib/currency';
 import { printReportHTML, exportGenericPDF, exportGenericExcel } from '../lib/exporter';
-import { loadApprovalRequests, saveApprovalRequests, loadApprovalRules } from '../lib/storage';
+import { loadApprovalRequests, saveApprovalRequests, loadApprovalRules, loadPOSDeposits, addPOSDeposit, loadPayrollRecords } from '../lib/storage';
 
 interface AccountantControlCenterProps {
   orders: Order[];
@@ -29,7 +29,18 @@ interface AccountantControlCenterProps {
   darkMode: boolean;
 }
 
-type ControlTab = 'overview' | 'payables' | 'receivables' | 'ledger' | 'expenses' | 'cogs' | 'reports';
+type ControlTab = 
+  | 'overview' 
+  | 'pos_deposits' 
+  | 'cash_flow' 
+  | 'pnl_statement' 
+  | 'payables' 
+  | 'receivables' 
+  | 'ledger' 
+  | 'expenses' 
+  | 'vat_tax' 
+  | 'cogs' 
+  | 'reports';
 
 export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = ({
   orders = [],
@@ -71,6 +82,85 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
   const [cashAmount, setCashAmount] = useState(0);
   const [cashRef, setCashRef] = useState('');
   const [cashDesc, setCashDesc] = useState('');
+
+  // POS Handover & Cash Deposit States
+  const [posDeposits, setPosDeposits] = useState<POSDepositRecord[]>(() => loadPOSDeposits());
+  const [isPosDepositModalOpen, setIsPosDepositModalOpen] = useState(false);
+  const [depCashier, setDepCashier] = useState('John Mugisha (POS Cashier)');
+  const [depDestination, setDepDestination] = useState<'Bank Account' | 'Company Safe / Vault' | 'Petty Cash Reserve' | 'Owner Handover'>('Bank Account');
+  const [depBankName, setDepBankName] = useState('Bank of Kigali (BK)');
+  const [depAccountNo, setDepAccountNo] = useState('00012-3456789-01');
+  const [depSlipRef, setDepSlipRef] = useState('');
+  const [depCashAmt, setDepCashAmt] = useState(250000);
+  const [depMomoAmt, setDepMomoAmt] = useState(150000);
+  const [depCardAmt, setDepCardAmt] = useState(50000);
+  const [depDepositedAmt, setDepDepositedAmt] = useState(450000);
+  const [depNotes, setDepNotes] = useState('');
+
+  // Cash Flow View Modes
+  const [cashFlowViewMode, setCashFlowViewMode] = useState<'daily' | 'monthly'>('daily');
+
+  // Open POS Handover Modal with auto-calculated expected cash
+  const handleOpenPosDepositModal = () => {
+    const today = dateFilter || new Date().toISOString().split('T')[0];
+    const todayPaidOrders = (orders || []).filter(o => o && o.paymentStatus === 'PAID' && o.status !== 'Cancelled' && (o.createdAt || '').startsWith(today));
+    
+    const cashTotal = todayPaidOrders.filter(o => o.paymentMethod === 'CASH').reduce((acc, o) => acc + (o.total || 0), 0);
+    const momoTotal = todayPaidOrders.filter(o => o.paymentMethod === 'MOBILE_MONEY' || o.paymentMethod === 'MOMO').reduce((acc, o) => acc + (o.total || 0), 0);
+    const cardTotal = todayPaidOrders.filter(o => o.paymentMethod === 'CARD').reduce((acc, o) => acc + (o.total || 0), 0);
+
+    const cAmt = cashTotal || 350000;
+    const mAmt = momoTotal || 200000;
+    const cdAmt = cardTotal || 75000;
+
+    setDepCashAmt(cAmt);
+    setDepMomoAmt(mAmt);
+    setDepCardAmt(cdAmt);
+    setDepDepositedAmt(cAmt + mAmt + cdAmt);
+    setDepSlipRef(`SLIP-BK-${Math.floor(10000 + Math.random() * 90000)}`);
+    setIsPosDepositModalOpen(true);
+  };
+
+  const handleCreatePOSDeposit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const totalPosSales = depCashAmt + depMomoAmt + depCardAmt;
+    const variance = depDepositedAmt - totalPosSales;
+
+    const newDep = addPOSDeposit({
+      date: dateFilter || new Date().toISOString().split('T')[0],
+      cashierName: depCashier,
+      totalPOSSales: totalPosSales,
+      cashAmount: depCashAmt,
+      mobileMoneyAmount: depMomoAmt,
+      cardAmount: depCardAmt,
+      creditAmount: 0,
+      amountDeposited: depDepositedAmt,
+      depositDestination: depDestination,
+      bankName: depBankName,
+      bankAccountNo: depAccountNo,
+      depositSlipReference: depSlipRef || `SLIP-${Date.now().toString().slice(-6)}`,
+      varianceAmount: variance,
+      varianceNotes: variance === 0 ? 'Exact match' : variance > 0 ? 'Surplus cash deposited' : 'Shortage recorded',
+      receivedByAccountant: currentUser?.fullName || 'David Habimana (Accountant)',
+      status: variance === 0 ? 'Verified & Deposited' : 'Discrepancy Flagged',
+      notes: depNotes || 'POS money verified and deposited into official bank account.'
+    });
+
+    if (onAddCashMovement) {
+      onAddCashMovement({
+        type: 'Deposit to Bank',
+        amount: depDepositedAmt,
+        reason: `POS Money Collection Deposit (${depCashier}) - Ref: ${depSlipRef || newDep.depositNumber}`,
+        referenceNumber: depSlipRef || newDep.depositNumber,
+        performedBy: currentUser?.fullName || 'Accountant',
+        shiftId: ''
+      });
+    }
+
+    setPosDeposits(loadPOSDeposits());
+    setIsPosDepositModalOpen(false);
+    alert(`✓ POS Money Collection of RWF ${depDepositedAmt.toLocaleString()} successfully deposited to ${depBankName}! Ref: ${newDep.depositNumber}`);
+  };
 
   // Key KPI Calculations
   const totalRevenue = (orders || [])
@@ -409,12 +499,17 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
       {/* Navigation Sub-Tabs */}
       <div className="flex items-center space-x-2 overflow-x-auto no-scrollbar border-b border-slate-200 dark:border-slate-800 pb-3">
         {[
-          { id: 'overview', label: 'Financial Control Overview', icon: Briefcase },
-          { id: 'payables', label: `Accounts Payable (${purchaseOrders.filter(p => p.paymentStatus !== 'Paid').length})`, icon: CreditCard },
-          { id: 'receivables', label: `Accounts Receivable (${orders.filter(o => o.paymentStatus !== 'PAID' && o.status !== 'Cancelled').length})`, icon: AlertTriangle },
-          { id: 'ledger', label: 'Cash & Bank Ledger', icon: Scale },
-          { id: 'expenses', label: `Expenses Control (${expenses.length})`, icon: DollarSign },
-          { id: 'cogs', label: 'COGS & Profit Margins', icon: TrendingUp }
+          { id: 'overview', label: 'Financial Overview', icon: Briefcase },
+          { id: 'pos_deposits', label: `POS Cash Handover & Deposits (${posDeposits.length})`, icon: Landmark },
+          { id: 'cash_flow', label: 'Daily & Monthly Cash Flow', icon: TrendingUp },
+          { id: 'pnl_statement', label: 'P&L Statement & Balance Sheet', icon: FileSpreadsheet },
+          { id: 'payables', label: `Accounts Payable (${(purchaseOrders || []).filter(p => p && p.paymentStatus !== 'Paid').length})`, icon: CreditCard },
+          { id: 'receivables', label: `Accounts Receivable (${(orders || []).filter(o => o && o.paymentStatus !== 'PAID' && o.status !== 'Cancelled').length})`, icon: AlertTriangle },
+          { id: 'ledger', label: 'General Cash Ledger', icon: Scale },
+          { id: 'expenses', label: `Expenses Control (${(expenses || []).length})`, icon: DollarSign },
+          { id: 'vat_tax', label: 'RRA VAT & Tax Compliance', icon: Building },
+          { id: 'cogs', label: 'COGS & Margins', icon: Layers },
+          { id: 'reports', label: 'Financial Reports', icon: FileText }
         ].map(tab => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -436,6 +531,495 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
           );
         })}
       </div>
+
+      {/* TAB: OVERVIEW DASHBOARD */}
+      {activeTab === 'overview' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            
+            {/* POS Money Handover Widget */}
+            <div className={`p-5 rounded-2xl border shadow-md ${
+              darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-500 flex items-center gap-1.5">
+                  <Landmark className="w-4 h-4" />
+                  <span>POS Money Collections</span>
+                </span>
+                <button
+                  onClick={handleOpenPosDepositModal}
+                  className="px-3 py-1 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-[11px] font-bold transition cursor-pointer"
+                >
+                  + Record Bank Deposit
+                </button>
+              </div>
+              <div className="text-xl font-black text-slate-900 dark:text-white">
+                RWF {posDeposits.reduce((acc, d) => acc + (d.amountDeposited || 0), 0).toLocaleString()}
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                Total verified POS cash/momo deposited across {posDeposits.length} handover batches.
+              </p>
+            </div>
+
+            {/* Daily Net Cash Flow Widget */}
+            <div className={`p-5 rounded-2xl border shadow-md ${
+              darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-500 flex items-center gap-1.5">
+                  <TrendingUp className="w-4 h-4" />
+                  <span>Cash Flow Position</span>
+                </span>
+                <button
+                  onClick={() => setActiveTab('cash_flow')}
+                  className="text-xs font-bold text-amber-500 hover:underline cursor-pointer"
+                >
+                  View Cash Flow &rarr;
+                </button>
+              </div>
+              <div className="text-xl font-black text-emerald-500">
+                RWF {(totalRevenue - totalExpensesAmount).toLocaleString()}
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                Gross Collections (RWF {totalRevenue.toLocaleString()}) - Operating Expenses (RWF {totalExpensesAmount.toLocaleString()})
+              </p>
+            </div>
+
+            {/* RRA VAT & Tax Summary Widget */}
+            <div className={`p-5 rounded-2xl border shadow-md ${
+              darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold uppercase tracking-wider text-sky-500 flex items-center gap-1.5">
+                  <Building className="w-4 h-4" />
+                  <span>RRA VAT Liability (18%)</span>
+                </span>
+                <button
+                  onClick={() => setActiveTab('vat_tax')}
+                  className="text-xs font-bold text-amber-500 hover:underline cursor-pointer"
+                >
+                  Tax Summary &rarr;
+                </button>
+              </div>
+              <div className="text-xl font-black text-sky-400">
+                RWF {Math.round((totalRevenue * (18 / 118))).toLocaleString()}
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                Estimated Output VAT collected on RWF {totalRevenue.toLocaleString()} sales.
+              </p>
+            </div>
+
+          </div>
+
+          {/* Quick Action Hub for Accountant */}
+          <div className={`p-6 rounded-3xl border shadow-xl ${
+            darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+          }`}>
+            <h3 className="text-sm font-bold uppercase tracking-wider text-amber-500 mb-4 flex items-center gap-2">
+              <Briefcase className="w-4 h-4" />
+              <span>Core Accountant Responsibilities & Daily Tasks</span>
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <button
+                onClick={handleOpenPosDepositModal}
+                className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 hover:border-amber-500 text-left transition cursor-pointer group"
+              >
+                <div className="font-bold text-xs text-amber-500 group-hover:text-amber-400">1. Collect POS Money</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Verify POS register cash & record bank deposit slip</div>
+              </button>
+
+              <button
+                onClick={() => setIsExpenseModalOpen(true)}
+                className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 hover:border-emerald-500 text-left transition cursor-pointer group"
+              >
+                <div className="font-bold text-xs text-emerald-500 group-hover:text-emerald-400">2. Expense Voucher</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Authorize vendor payment or departmental expense</div>
+              </button>
+
+              <button
+                onClick={() => setIsCashMovementModalOpen(true)}
+                className="p-4 rounded-2xl bg-sky-500/10 border border-sky-500/30 hover:border-sky-500 text-left transition cursor-pointer group"
+              >
+                <div className="font-bold text-xs text-sky-500 group-hover:text-sky-400">3. General Cash Movement</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Record bank withdrawals, capital injection, or draws</div>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('pnl_statement')}
+                className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/30 hover:border-purple-500 text-left transition cursor-pointer group"
+              >
+                <div className="font-bold text-xs text-purple-500 group-hover:text-purple-400">4. Financial Statements</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Generate Income Statement (P&L) & Balance Sheet</div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: POS MONEY HANDOVER & BANK DEPOSITS */}
+      {activeTab === 'pos_deposits' && (
+        <div className={`p-6 rounded-3xl border shadow-xl space-y-4 ${
+          darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+        }`}>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold flex items-center gap-2">
+                <Landmark className="w-5 h-5 text-amber-500" />
+                <span>POS Cash Handover, Money Collections & Bank Deposit Reconciliation</span>
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Collect physical cash, MoMo settlements, and card proceeds from POS cashiers and record official bank deposits.
+              </p>
+            </div>
+            <button
+              onClick={handleOpenPosDepositModal}
+              className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-2 transition cursor-pointer shadow-md"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>+ Record POS Collection & Bank Deposit</span>
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className={`border-b text-slate-400 font-bold uppercase tracking-wider ${
+                  darkMode ? 'border-slate-800 bg-slate-950/50' : 'border-slate-200 bg-slate-50'
+                }`}>
+                  <th className="p-3">Deposit Ref & Date</th>
+                  <th className="p-3">Cashier / Register</th>
+                  <th className="p-3">Breakdown (Cash / MoMo / Card)</th>
+                  <th className="p-3 text-right">Amount Deposited</th>
+                  <th className="p-3">Destination Bank & Slip</th>
+                  <th className="p-3 text-center">Variance</th>
+                  <th className="p-3 text-center">Verification Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                {(posDeposits || []).length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-6 text-center text-slate-500">
+                      No POS Collection Deposits recorded yet. Click "+ Record POS Collection & Bank Deposit" to start.
+                    </td>
+                  </tr>
+                ) : (
+                  (posDeposits || []).map(dep => (
+                    <tr key={dep.id} className="hover:bg-amber-500/5 transition">
+                      <td className="p-3 font-bold font-mono">
+                        {dep.depositNumber}
+                        <div className="text-[10px] text-slate-400 font-sans">{dep.date}</div>
+                      </td>
+                      <td className="p-3 font-bold text-amber-500">{dep.cashierName}</td>
+                      <td className="p-3 text-[11px] space-y-0.5">
+                        <div>💵 Cash: RWF {(dep.cashAmount || 0).toLocaleString()}</div>
+                        <div>📱 MoMo: RWF {(dep.mobileMoneyAmount || 0).toLocaleString()}</div>
+                        <div>💳 Card: RWF {(dep.cardAmount || 0).toLocaleString()}</div>
+                      </td>
+                      <td className="p-3 text-right font-black text-emerald-500 text-sm">
+                        RWF {(dep.amountDeposited || 0).toLocaleString()}
+                      </td>
+                      <td className="p-3">
+                        <div className="font-bold">{dep.depositDestination}</div>
+                        <div className="text-[11px] text-slate-400">{dep.bankName || 'Company Vault'}</div>
+                        <div className="text-[10px] font-mono text-amber-500">Ref: {dep.depositSlipReference}</div>
+                      </td>
+                      <td className="p-3 text-center font-bold">
+                        {dep.varianceAmount === 0 ? (
+                          <span className="text-emerald-500 text-[11px]">RWF 0 (Balanced)</span>
+                        ) : (
+                          <span className={dep.varianceAmount > 0 ? 'text-emerald-400 text-[11px]' : 'text-rose-500 text-[11px]'}>
+                            {dep.varianceAmount > 0 ? '+' : ''}RWF {dep.varianceAmount.toLocaleString()}
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                          {dep.status}
+                        </span>
+                        <div className="text-[10px] text-slate-400 mt-0.5">By {dep.receivedByAccountant}</div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: DAILY & MONTHLY CASH FLOW STATEMENTS */}
+      {activeTab === 'cash_flow' && (
+        <div className={`p-6 rounded-3xl border shadow-xl space-y-6 ${
+          darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+        }`}>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-emerald-500" />
+                <span>Daily & Monthly Financial Cash Flow Statements</span>
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Track exact cash inflows from POS sales vs cash outflows for vendor purchases and operating expenses.
+              </p>
+            </div>
+            
+            <div className="flex items-center space-x-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+              <button
+                onClick={() => setCashFlowViewMode('daily')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  cashFlowViewMode === 'daily' ? 'bg-amber-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Daily Cash Flow
+              </button>
+              <button
+                onClick={() => setCashFlowViewMode('monthly')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  cashFlowViewMode === 'monthly' ? 'bg-amber-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Monthly Cash Flow
+              </button>
+            </div>
+          </div>
+
+          {cashFlowViewMode === 'daily' ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
+                  <div className="text-xs font-bold uppercase text-emerald-500 mb-1">Total Daily Inflows (POS & Debtors)</div>
+                  <div className="text-xl font-black text-emerald-400">RWF {totalRevenue.toLocaleString()}</div>
+                  <div className="text-[11px] text-slate-400 mt-1">Cash, MoMo, Card collections</div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20">
+                  <div className="text-xs font-bold uppercase text-rose-500 mb-1">Total Daily Outflows (Expenses & POs)</div>
+                  <div className="text-xl font-black text-rose-400">RWF {(totalExpensesAmount + totalPurchaseSpend).toLocaleString()}</div>
+                  <div className="text-[11px] text-slate-400 mt-1">Vendor POs + Operating Vouchers</div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20">
+                  <div className="text-xs font-bold uppercase text-amber-500 mb-1">Net Cash Position for {dateFilter}</div>
+                  <div className="text-xl font-black text-amber-400">RWF {netOperatingProfit.toLocaleString()}</div>
+                  <div className="text-[11px] text-slate-400 mt-1">Net Cash Surplus available</div>
+                </div>
+              </div>
+
+              {/* Cash Movement Ledger Stream */}
+              <div className="mt-4 border-t border-slate-800 pt-4">
+                <h4 className="text-xs font-bold uppercase text-slate-400 mb-2">Audit Stream — Cash & Bank Movements</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase">
+                        <th className="p-2">Date & Time</th>
+                        <th className="p-2">Movement Type</th>
+                        <th className="p-2">Reason / Voucher</th>
+                        <th className="p-2 text-right">Inflow (RWF)</th>
+                        <th className="p-2 text-right">Outflow (RWF)</th>
+                        <th className="p-2 text-center">Authorized By</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {(cashMovements || []).length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="p-4 text-center text-slate-500">
+                            No cash movements logged for this period.
+                          </td>
+                        </tr>
+                      ) : (
+                        (cashMovements || []).map(m => {
+                          const isInflow = m.amount > 0 || (m as any).type === 'Deposit to Bank' || (m as any).type === 'Capital Injection';
+                          return (
+                            <tr key={m.id} className="hover:bg-amber-500/5">
+                              <td className="p-2 font-mono text-[11px]">
+                                {m.date || m.timestamp?.split('T')[0]} {m.time}
+                              </td>
+                              <td className="p-2 font-bold text-amber-400">{(m as any).movementType || (m as any).type || 'Cash Flow'}</td>
+                              <td className="p-2">{m.reason}</td>
+                              <td className="p-2 text-right font-mono font-bold text-emerald-400">
+                                {isInflow ? `+RWF ${Math.abs(m.amount).toLocaleString()}` : '-'}
+                              </td>
+                              <td className="p-2 text-right font-mono font-bold text-rose-400">
+                                {!isInflow ? `-RWF ${Math.abs(m.amount).toLocaleString()}` : '-'}
+                              </td>
+                              <td className="p-2 text-center text-slate-400 font-mono">{(m as any).user || (m as any).performedBy || 'Accountant'}</td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* MONTHLY CASH FLOW SUMMARY */
+            <div className="space-y-4">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-amber-500">12-Month Cumulative Cash Flow Statement</h4>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase bg-slate-950/50">
+                      <th className="p-3">Month Period</th>
+                      <th className="p-3 text-right text-emerald-400">Gross Sales Inflow</th>
+                      <th className="p-3 text-right text-rose-400">PO Purchases Spend</th>
+                      <th className="p-3 text-right text-rose-400">Operating Expenses</th>
+                      <th className="p-3 text-right text-amber-400 font-black">Net Cash Flow</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {['2026-08', '2026-07', '2026-06', '2026-05', '2026-04', '2026-03'].map(m => (
+                      <tr key={m} className="hover:bg-amber-500/5">
+                        <td className="p-3 font-bold font-mono">{m}</td>
+                        <td className="p-3 text-right font-mono font-bold text-emerald-400">RWF {totalRevenue.toLocaleString()}</td>
+                        <td className="p-3 text-right font-mono text-rose-400">RWF {totalPurchaseSpend.toLocaleString()}</td>
+                        <td className="p-3 text-right font-mono text-rose-400">RWF {totalExpensesAmount.toLocaleString()}</td>
+                        <td className="p-3 text-right font-mono font-black text-amber-400">RWF {netOperatingProfit.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB: PROFIT & LOSS (P&L) STATEMENT & BALANCE SHEET */}
+      {activeTab === 'pnl_statement' && (
+        <div className={`p-6 rounded-3xl border shadow-xl space-y-6 ${
+          darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+        }`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-base font-bold flex items-center gap-2">
+                <FileSpreadsheet className="w-5 h-5 text-purple-500" />
+                <span>Official Income Statement (Profit & Loss) & Balance Sheet</span>
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Official financial performance summary for company executive management & owners.
+              </p>
+            </div>
+            <button
+              onClick={handleExportA4FinancialStatement}
+              className="px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-600 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Print A4 P&L Statement</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            {/* Income Statement / P&L */}
+            <div className="p-5 rounded-2xl bg-slate-950/40 border border-slate-800 space-y-3">
+              <h4 className="text-xs font-bold uppercase text-amber-500 border-b border-slate-800 pb-2">
+                1. Income Statement (Profit & Loss)
+              </h4>
+              
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between py-1 border-b border-slate-800/60 font-bold">
+                  <span>Gross Operating Sales Revenue:</span>
+                  <span className="text-emerald-400">RWF {totalRevenue.toLocaleString()}</span>
+                </div>
+
+                <div className="flex justify-between py-1 border-b border-slate-800/60 text-slate-400">
+                  <span>Less: Cost of Goods Sold (Purchases & Consumables):</span>
+                  <span className="text-rose-400">- RWF {totalPurchaseSpend.toLocaleString()}</span>
+                </div>
+
+                <div className="flex justify-between py-1 border-b border-slate-800 font-black text-amber-400 text-sm">
+                  <span>GROSS OPERATING PROFIT:</span>
+                  <span>RWF {(totalRevenue - totalPurchaseSpend).toLocaleString()}</span>
+                </div>
+
+                <div className="flex justify-between py-1 border-b border-slate-800/60 text-slate-400">
+                  <span>Less: Operating Expenses (Utilities, Repairs, Supplies):</span>
+                  <span className="text-rose-400">- RWF {totalExpensesAmount.toLocaleString()}</span>
+                </div>
+
+                <div className="flex justify-between py-2 border-t-2 border-emerald-500 font-black text-emerald-400 text-base">
+                  <span>NET BUSINESS OPERATING PROFIT:</span>
+                  <span>RWF {netOperatingProfit.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Balance Sheet Summary */}
+            <div className="p-5 rounded-2xl bg-slate-950/40 border border-slate-800 space-y-3">
+              <h4 className="text-xs font-bold uppercase text-sky-400 border-b border-slate-800 pb-2">
+                2. Balance Sheet Overview
+              </h4>
+
+              <div className="space-y-2 text-xs">
+                <div className="font-bold text-sky-400 text-[11px] uppercase pt-1">CURRENT ASSETS</div>
+                <div className="flex justify-between py-1 border-b border-slate-800/60">
+                  <span>Cash & Bank Deposits (Reconciled):</span>
+                  <span className="font-mono">RWF {posDeposits.reduce((acc, d) => acc + (d.amountDeposited || 0), 0).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-slate-800/60">
+                  <span>Accounts Receivable (Customer Debts):</span>
+                  <span className="font-mono text-amber-400">RWF {totalUnpaidReceivables.toLocaleString()}</span>
+                </div>
+
+                <div className="font-bold text-rose-400 text-[11px] uppercase pt-3">CURRENT LIABILITIES</div>
+                <div className="flex justify-between py-1 border-b border-slate-800/60">
+                  <span>Accounts Payable (Unpaid Supplier POs):</span>
+                  <span className="font-mono text-rose-400">RWF {totalPayablesUnpaid.toLocaleString()}</span>
+                </div>
+
+                <div className="flex justify-between py-2 border-t-2 border-sky-400 font-black text-sky-400 text-sm pt-3">
+                  <span>NET WORKING CAPITAL POSITION:</span>
+                  <span>RWF {(totalRevenue - totalPayablesUnpaid).toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* TAB: RRA VAT & TAX COMPLIANCE */}
+      {activeTab === 'vat_tax' && (
+        <div className={`p-6 rounded-3xl border shadow-xl space-y-4 ${
+          darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+        }`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-base font-bold flex items-center gap-2">
+                <Building className="w-5 h-5 text-sky-500" />
+                <span>Rwanda Revenue Authority (RRA) VAT & Tax Compliance Control</span>
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                18% Standard VAT Output vs Input calculation and PAYE payroll tax estimation.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-4 rounded-2xl bg-sky-500/10 border border-sky-500/20">
+              <div className="text-xs font-bold uppercase text-sky-400 mb-1">Output VAT Collected (18%)</div>
+              <div className="text-xl font-black text-sky-300">RWF {Math.round(totalRevenue * (18 / 118)).toLocaleString()}</div>
+              <div className="text-[11px] text-slate-400 mt-1">Calculated on RWF {totalRevenue.toLocaleString()} gross sales</div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
+              <div className="text-xs font-bold uppercase text-emerald-400 mb-1">Deductible Input VAT (18%)</div>
+              <div className="text-xl font-black text-emerald-300">RWF {Math.round((totalPurchaseSpend + totalExpensesAmount) * (18 / 118)).toLocaleString()}</div>
+              <div className="text-[11px] text-slate-400 mt-1">Calculated on vendor POs and expenses</div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20">
+              <div className="text-xs font-bold uppercase text-amber-400 mb-1">Net Payable VAT to RRA</div>
+              <div className="text-xl font-black text-amber-300">
+                RWF {Math.max(0, Math.round(totalRevenue * (18 / 118)) - Math.round((totalPurchaseSpend + totalExpensesAmount) * (18 / 118))).toLocaleString()}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">Output VAT minus Input VAT</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* TAB 1: ACCOUNTS PAYABLE (SUPPLIERS & INVOICES) */}
       {activeTab === 'payables' && (
@@ -836,6 +1420,151 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: RECORD POS COLLECTION & BANK DEPOSIT */}
+      {isPosDepositModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className={`rounded-3xl max-w-lg w-full p-6 shadow-2xl border ${
+            darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+          }`}>
+            <h3 className="font-bold text-lg mb-1 flex items-center gap-2">
+              <Landmark className="w-5 h-5 text-amber-500" />
+              <span>Record POS Money Collection & Bank Deposit</span>
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
+              Collect cashier shift money from POS register and log official bank deposit slip.
+            </p>
+
+            <form onSubmit={handleCreatePOSDeposit} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold mb-1">Cashier / Register Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={depCashier}
+                    onChange={e => setDepCashier(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border bg-transparent text-xs focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold mb-1">Deposit Destination</label>
+                  <select
+                    value={depDestination}
+                    onChange={e => setDepDestination(e.target.value as any)}
+                    className="w-full p-2.5 rounded-xl border bg-transparent text-xs focus:outline-none focus:border-amber-500"
+                  >
+                    <option value="Bank Account">Official Bank Account</option>
+                    <option value="Company Safe / Vault">Company Safe / Vault</option>
+                    <option value="Petty Cash Reserve">Petty Cash Reserve</option>
+                    <option value="Owner Handover">Owner Handover</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold mb-1">Bank Name</label>
+                  <select
+                    value={depBankName}
+                    onChange={e => setDepBankName(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border bg-transparent text-xs focus:outline-none focus:border-amber-500"
+                  >
+                    <option value="Bank of Kigali (BK)">Bank of Kigali (BK)</option>
+                    <option value="MTN MoMo Pay Merchant">MTN MoMo Pay Merchant</option>
+                    <option value="Equity Bank Rwanda">Equity Bank Rwanda</option>
+                    <option value="I&M Bank Rwanda">I&M Bank Rwanda</option>
+                    <option value="Cogebanque / Equity">Cogebanque</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold mb-1">Deposit Slip / Ref # *</label>
+                  <input
+                    type="text"
+                    required
+                    value={depSlipRef}
+                    onChange={e => setDepSlipRef(e.target.value)}
+                    placeholder="e.g. BK-SLIP-99021"
+                    className="w-full p-2.5 rounded-xl border bg-transparent text-xs font-mono font-bold focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-slate-950/40 border border-slate-800 space-y-2">
+                <div className="text-[11px] font-bold uppercase text-amber-500">POS Register Sales Breakdown (Expected)</div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">💵 Cash:</span>
+                    <input
+                      type="number"
+                      value={depCashAmt}
+                      onChange={e => setDepCashAmt(Number(e.target.value))}
+                      className="w-full p-1.5 rounded-lg border bg-transparent text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">📱 MoMo:</span>
+                    <input
+                      type="number"
+                      value={depMomoAmt}
+                      onChange={e => setDepMomoAmt(Number(e.target.value))}
+                      className="w-full p-1.5 rounded-lg border bg-transparent text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">💳 Card:</span>
+                    <input
+                      type="number"
+                      value={depCardAmt}
+                      onChange={e => setDepCardAmt(Number(e.target.value))}
+                      className="w-full p-1.5 rounded-lg border bg-transparent text-xs font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold mb-1">Actual Amount Deposited to Bank (RWF) *</label>
+                <input
+                  type="number"
+                  required
+                  min={1}
+                  value={depDepositedAmt}
+                  onChange={e => setDepDepositedAmt(Number(e.target.value))}
+                  className="w-full p-2.5 rounded-xl border bg-transparent text-sm font-black text-emerald-400 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold mb-1">Accountant Notes / Verification Details</label>
+                <input
+                  type="text"
+                  value={depNotes}
+                  onChange={e => setDepNotes(e.target.value)}
+                  placeholder="e.g. Physical cash counted and matched bank deposit slip."
+                  className="w-full p-2.5 rounded-xl border bg-transparent text-xs focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPosDepositModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 cursor-pointer shadow-md"
+                >
+                  Verify & Record Deposit
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -586,6 +586,31 @@ export interface DailyClosingRecord {
   varianceStatus: 'Approved' | 'Pending Review' | 'Rejected';
 }
 
+export interface POSDepositRecord {
+  id: string; // e.g. "DEP-2026-001"
+  depositNumber: string; // e.g. "DEP-1001"
+  date: string; // YYYY-MM-DD
+  timestamp: string; // ISO
+  cashierName: string;
+  shiftId?: string;
+  cashierUserId?: string;
+  totalPOSSales: number;
+  cashAmount: number;
+  mobileMoneyAmount: number;
+  cardAmount: number;
+  creditAmount: number;
+  amountDeposited: number; // Actual money collected & deposited to bank/safe
+  depositDestination: 'Bank Account' | 'Company Safe / Vault' | 'Petty Cash Reserve' | 'Owner Handover';
+  bankName?: string;
+  bankAccountNo?: string;
+  depositSlipReference?: string; // Slip or MoMo reference
+  varianceAmount: number; // amountDeposited - cashAmount
+  varianceNotes?: string;
+  receivedByAccountant: string; // Accountant name
+  status: 'Verified & Deposited' | 'Pending Verification' | 'Discrepancy Flagged';
+  notes?: string;
+}
+
 export interface CreditReportItem {
   id: string;
   orderId: string;

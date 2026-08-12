@@ -1,7 +1,7 @@
 import { 
   MenuItem, Table, Waiter, Order, KitchenTicket, 
   StockAdjustmentLog, Shift, GuestRoom, AppUser, AuditLog,
-  Expense, CashMovement, DailyClosingRecord, PurchaseOrder, KitchenIngredient,
+  Expense, CashMovement, DailyClosingRecord, POSDepositRecord, PurchaseOrder, KitchenIngredient,
   StockMovementRecord, KitchenWasteRecord, Recipe,
   WhatsAppSettings, WhatsAppRecipient, ReportDeliveryRule, ReportDeliveryHistory,
   MessageTemplate, NotificationItem, NotificationRule, ApprovalRule, ApprovalRequest,
@@ -66,6 +66,7 @@ const KEYS = {
   SALARY_ADVANCES: 'hotel_salary_advances_prod',
   PAYROLL_RECORDS: 'hotel_payroll_records_prod',
   ATTENDANCE_RECORDS: 'hotel_attendance_records_prod',
+  POS_DEPOSITS: 'hotel_pos_deposits_prod',
 };
 
 export const SUPER_ADMIN_CREDENTIALS: AppUser = {
@@ -696,6 +697,52 @@ export function loadAttendanceRecords(): AttendanceRecord[] {
 
 export function saveAttendanceRecords(records: AttendanceRecord[]): void {
   setStorage(KEYS.ATTENDANCE_RECORDS, records);
+}
+
+// POS Deposits Storage & Cash Reconciliation
+export function loadPOSDeposits(): POSDepositRecord[] {
+  const initialDeposits: POSDepositRecord[] = [
+    {
+      id: 'DEP-2026-001',
+      depositNumber: 'DEP-1001',
+      date: new Date().toISOString().split('T')[0],
+      timestamp: new Date().toISOString(),
+      cashierName: 'John Mugisha',
+      totalPOSSales: 450000,
+      cashAmount: 250000,
+      mobileMoneyAmount: 150000,
+      cardAmount: 50000,
+      creditAmount: 0,
+      amountDeposited: 450000,
+      depositDestination: 'Bank Account',
+      bankName: 'Bank of Kigali (BK)',
+      bankAccountNo: '00012-3456789-01',
+      depositSlipReference: 'BK-SLIP-99231',
+      varianceAmount: 0,
+      varianceNotes: 'Balanced - Verified by Accountant',
+      receivedByAccountant: 'David Habimana',
+      status: 'Verified & Deposited',
+      notes: 'Morning Shift POS Sales Handover fully deposited.'
+    }
+  ];
+  return getStorage<POSDepositRecord[]>(KEYS.POS_DEPOSITS, initialDeposits);
+}
+
+export function savePOSDeposits(deposits: POSDepositRecord[]): void {
+  setStorage(KEYS.POS_DEPOSITS, deposits);
+}
+
+export function addPOSDeposit(dep: Omit<POSDepositRecord, 'id' | 'depositNumber' | 'timestamp'>): POSDepositRecord {
+  const deposits = loadPOSDeposits();
+  const num = deposits.length + 1001;
+  const newDep: POSDepositRecord = {
+    ...dep,
+    id: `DEP-${Date.now()}-${Math.floor(Math.random() * 100)}`,
+    depositNumber: `DEP-${num}`,
+    timestamp: new Date().toISOString()
+  };
+  savePOSDeposits([newDep, ...deposits]);
+  return newDep;
 }
 
 export function resetAllDataToDefault(): void {
