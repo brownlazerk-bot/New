@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { 
   Order, MenuItem, Shift, Expense, CashMovement, DailyClosingRecord, POSDepositRecord,
-  PurchaseOrder, AppUser, ExpenseDepartment, PaymentMethod 
+  PurchaseOrder, PurchaseOrderItem, KitchenIngredient, AppUser, ExpenseDepartment, PaymentMethod 
 } from '../types';
 import { formatCurrency } from '../lib/currency';
 import { printReportHTML, exportGenericPDF, exportGenericExcel } from '../lib/exporter';
@@ -17,6 +17,7 @@ import { loadApprovalRequests, saveApprovalRequests, loadApprovalRules, loadPOSD
 interface AccountantControlCenterProps {
   orders: Order[];
   menuItems: MenuItem[];
+  ingredients?: KitchenIngredient[];
   purchaseOrders: PurchaseOrder[];
   expenses: Expense[];
   cashMovements: CashMovement[];
@@ -24,7 +25,11 @@ interface AccountantControlCenterProps {
   currentUser?: AppUser | null;
   onAddExpense?: (expense: Omit<Expense, 'id' | 'expenseNumber' | 'timestamp'>) => void;
   onAddCashMovement?: (movement: Omit<CashMovement, 'id' | 'timestamp' | 'date' | 'time'>) => void;
+  onCreatePurchaseOrder?: (po: Omit<PurchaseOrder, 'id' | 'poNumber' | 'timestamp'>) => Omit<PurchaseOrder, 'id' | 'poNumber' | 'timestamp'> | PurchaseOrder | void;
+  onReceivePurchaseOrder?: (poId: string, receivedItemsPayload?: any, receiverName?: string) => void;
+  onRevertPurchaseOrder?: (poId: string) => void;
   onEditPurchaseOrder?: (id: string, updated: Partial<PurchaseOrder>) => void;
+  onDeletePurchaseOrder?: (poId: string) => void;
   onUpdateOrder?: (updatedOrder: Order) => void;
   darkMode: boolean;
 }
@@ -45,6 +50,7 @@ type ControlTab =
 export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = ({
   orders = [],
   menuItems = [],
+  ingredients = [],
   purchaseOrders = [],
   expenses = [],
   cashMovements = [],
@@ -52,7 +58,11 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
   currentUser,
   onAddExpense,
   onAddCashMovement,
+  onCreatePurchaseOrder,
+  onReceivePurchaseOrder,
+  onRevertPurchaseOrder,
   onEditPurchaseOrder,
+  onDeletePurchaseOrder,
   onUpdateOrder,
   darkMode = false
 }) => {
@@ -64,6 +74,143 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
   const [payingPo, setPayingPo] = useState<PurchaseOrder | null>(null);
   const [poPayMethod, setPoPayMethod] = useState<PaymentMethod>('Bank Transfer');
   const [poPayRef, setPoPayRef] = useState('');
+
+  // New Purchase Order Modal States (Accountant Centralized Purchasing)
+  const [isNewPoModalOpen, setIsNewPoModalOpen] = useState(false);
+  const [newPoSupplier, setNewPoSupplier] = useState('Bralirwa Rwanda / Wholesale Distributor');
+  const [newPoDepartment, setNewPoDepartment] = useState<'Bar / Beverage' | 'Kitchen' | 'Housekeeping' | 'Maintenance'>('Bar / Beverage');
+  const [newPoDestination, setNewPoDestination] = useState('Main Beverage Stock');
+  const [newPoPaymentStatus, setNewPoPaymentStatus] = useState<'Paid' | 'Unpaid'>('Unpaid');
+  const [newPoPaymentMethod, setNewPoPaymentMethod] = useState<PaymentMethod>('Bank Transfer');
+  const [newPoAutoReceive, setNewPoAutoReceive] = useState(true);
+  const [newPoNotes, setNewPoNotes] = useState('');
+
+  const [newPoItems, setNewPoItems] = useState<{ itemId: string; itemName: string; category: string; quantity: number; unitCost: number; totalCost: number; destination?: string }[]>([]);
+  const [newPoItemType, setNewPoItemType] = useState<'catalog' | 'ingredient' | 'custom'>('catalog');
+  const [newPoSelectedItemId, setNewPoSelectedItemId] = useState('');
+  const [newPoCustomName, setNewPoCustomName] = useState('');
+  const [newPoQty, setNewPoQty] = useState(24);
+  const [newPoUnitCost, setNewPoUnitCost] = useState(1200);
+
+  const handleAddDraftPoItem = () => {
+    let name = '';
+    let category = 'General';
+    let id = `ITEM-${Date.now()}`;
+
+    if (newPoItemType === 'catalog') {
+      const selected = (menuItems || []).find(m => m.id === newPoSelectedItemId);
+      if (selected) {
+        name = selected.name;
+        category = selected.category || 'Beverage';
+        id = selected.id;
+      } else {
+        alert('Please select an item from the menu catalog');
+        return;
+      }
+    } else if (newPoItemType === 'ingredient') {
+      const selectedIng = (ingredients || []).find(i => i.id === newPoSelectedItemId);
+      if (selectedIng) {
+        name = selectedIng.name;
+        category = 'Recipe Ingredient';
+        id = selectedIng.id;
+      } else {
+        alert('Please select a recipe ingredient');
+        return;
+      }
+    } else {
+      if (!newPoCustomName.trim()) {
+        alert('Please enter custom item name');
+        return;
+      }
+      name = newPoCustomName.trim();
+      category = 'Custom Stock Purchase';
+    }
+
+    const q = Math.max(1, newPoQty);
+    const u = Math.max(0, newPoUnitCost);
+    const newItem = {
+      itemId: id,
+      itemName: name,
+      category: category,
+      quantity: q,
+      unitCost: u,
+      totalCost: q * u,
+      destination: newPoDestination
+    };
+
+    setNewPoItems(prev => [...prev, newItem]);
+    setNewPoCustomName('');
+  };
+
+  const handleCreateNewPo = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPoItems.length === 0) {
+      alert('Please add at least one item to the purchase order!');
+      return;
+    }
+
+    const totalPOAmount = newPoItems.reduce((acc, it) => acc + it.totalCost, 0);
+    const poPayload = {
+      poNumber: `PO-${Math.floor(1000 + Math.random() * 9000)}`,
+      supplierName: newPoSupplier || 'Vendor Distributor',
+      department: newPoDepartment,
+      items: newPoItems,
+      totalAmount: totalPOAmount,
+      status: (newPoAutoReceive ? 'Received' : 'Pending') as 'Received' | 'Pending',
+      paymentStatus: newPoPaymentStatus,
+      paymentMethod: newPoPaymentStatus === 'Paid' ? newPoPaymentMethod : undefined,
+      date: dateFilter || new Date().toISOString().split('T')[0],
+      expectedDeliveryDate: dateFilter || new Date().toISOString().split('T')[0],
+      notes: newPoNotes || 'Official Stock Purchase Order issued by Accountant',
+      createdByName: currentUser?.fullName || 'Accountant Control'
+    };
+
+    let createdPo: any = null;
+    if (onCreatePurchaseOrder) {
+      createdPo = onCreatePurchaseOrder(poPayload as any);
+    }
+
+    const poId = createdPo?.id || `PO-${Date.now()}`;
+
+    // Auto receive stock gains if requested
+    if (newPoAutoReceive && onReceivePurchaseOrder) {
+      onReceivePurchaseOrder(poId, undefined, currentUser?.fullName || 'Accountant');
+    }
+
+    // Auto log expense & cash outflow if paid immediately
+    if (newPoPaymentStatus === 'Paid') {
+      if (onAddExpense) {
+        onAddExpense({
+          expenseNumber: `EXP-PO-${Math.floor(1000 + Math.random() * 9000)}`,
+          date: dateFilter || new Date().toISOString().split('T')[0],
+          department: newPoDepartment === 'Kitchen' ? 'Kitchen' : 'Bar',
+          category: 'Stock Purchase',
+          amount: totalPOAmount,
+          paymentMethod: newPoPaymentMethod,
+          recipientName: newPoSupplier,
+          description: `Purchasing Order Payment - ${newPoSupplier} (${newPoItems.length} items)`,
+          approvedBy: currentUser?.fullName || 'Accountant',
+          status: 'Approved'
+        });
+      }
+
+      if (onAddCashMovement) {
+        onAddCashMovement({
+          type: 'Expense Payment',
+          amount: -totalPOAmount,
+          reason: `Stock Purchase Payment (${newPoSupplier}) - PO #${createdPo?.poNumber || poId}`,
+          referenceNumber: `PO-PAY-${createdPo?.poNumber || poId}`,
+          performedBy: currentUser?.fullName || 'Accountant',
+          shiftId: ''
+        });
+      }
+    }
+
+    alert(`✓ Purchase Order #${createdPo?.poNumber || 'New'} issued successfully!\nTotal Amount: RWF ${totalPOAmount.toLocaleString()}\nStatus: ${newPoAutoReceive ? 'Received & Stock Gains Applied' : 'Pending GRN Delivery'}`);
+    setIsNewPoModalOpen(false);
+    setNewPoItems([]);
+    setNewPoNotes('');
+  };
 
   const [payingOrder, setPayingOrder] = useState<Order | null>(null);
   const [orderPayMethod, setOrderPayMethod] = useState<PaymentMethod>('CASH');
@@ -629,19 +776,19 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
               </button>
 
               <button
-                onClick={() => setIsExpenseModalOpen(true)}
-                className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 hover:border-emerald-500 text-left transition cursor-pointer group"
+                onClick={() => setIsNewPoModalOpen(true)}
+                className="p-4 rounded-2xl bg-sky-500/10 border border-sky-500/30 hover:border-sky-500 text-left transition cursor-pointer group"
               >
-                <div className="font-bold text-xs text-emerald-500 group-hover:text-emerald-400">2. Expense Voucher</div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Authorize vendor payment or departmental expense</div>
+                <div className="font-bold text-xs text-sky-500 group-hover:text-sky-400">2. Issue Purchase Order (PO)</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Order beverages/ingredients & track vendor invoices</div>
               </button>
 
               <button
-                onClick={() => setIsCashMovementModalOpen(true)}
-                className="p-4 rounded-2xl bg-sky-500/10 border border-sky-500/30 hover:border-sky-500 text-left transition cursor-pointer group"
+                onClick={() => setIsExpenseModalOpen(true)}
+                className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 hover:border-emerald-500 text-left transition cursor-pointer group"
               >
-                <div className="font-bold text-xs text-sky-500 group-hover:text-sky-400">3. General Cash Movement</div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Record bank withdrawals, capital injection, or draws</div>
+                <div className="font-bold text-xs text-emerald-500 group-hover:text-emerald-400">3. Expense Voucher</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Authorize vendor payment or departmental expense</div>
               </button>
 
               <button
@@ -1030,21 +1177,32 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
             <div>
               <h3 className="text-base font-bold flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-amber-500" />
-                <span>Accounts Payable — Supplier Purchase Orders & Invoices</span>
+                <span>Accounts Payable — Centralized Purchasing & Vendor Invoices</span>
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Control supplier payments, verify received stock items, and settle outstanding purchase orders.
+                Issue vendor purchase orders, receive stock goods (GRN), and settle supplier invoices under Accountant Control.
               </p>
             </div>
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search supplier, PO #..."
-                className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border bg-transparent focus:outline-none focus:border-amber-500"
-              />
+            
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setIsNewPoModalOpen(true)}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md cursor-pointer transition"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>+ Issue Purchase Order / Buy Stock</span>
+              </button>
+
+              <div className="relative w-full sm:w-56">
+                <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="Search supplier, PO #..."
+                  className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border bg-transparent focus:outline-none focus:border-amber-500"
+                />
+              </div>
             </div>
           </div>
 
@@ -1061,14 +1219,14 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
                   <th className="p-3 text-right">Total Amount</th>
                   <th className="p-3 text-center">Intake Status</th>
                   <th className="p-3 text-center">Payment Status</th>
-                  <th className="p-3 text-right">Action</th>
+                  <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {(purchaseOrders || []).length === 0 ? (
                   <tr>
                     <td colSpan={8} className="p-6 text-center text-slate-500">
-                      No Purchase Orders recorded in system.
+                      No Purchase Orders recorded. Click "+ Issue Purchase Order / Buy Stock" to create one.
                     </td>
                   </tr>
                 ) : (
@@ -1079,6 +1237,8 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
                     ))
                     .map(po => {
                       const isUnpaid = po.paymentStatus !== 'Paid';
+                      const isPendingIntake = po.status !== 'Received';
+
                       return (
                         <tr key={po.id} className="hover:bg-amber-500/5 transition">
                           <td className="p-3 font-bold font-mono">
@@ -1115,18 +1275,45 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
                               {po.paymentStatus || 'Unpaid'}
                             </span>
                           </td>
-                          <td className="p-3 text-right">
+                          <td className="p-3 text-right space-x-1.5 whitespace-nowrap">
+                            {isPendingIntake && onReceivePurchaseOrder && (
+                              <button
+                                onClick={() => {
+                                  onReceivePurchaseOrder(po.id, undefined, currentUser?.fullName || 'Accountant');
+                                  alert(`✓ Stock Intake & GRN verified for PO #${po.poNumber}! Inventory stock levels updated.`);
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-sky-500 hover:bg-sky-600 text-white font-bold text-[11px] cursor-pointer transition"
+                                title="Mark Goods Received (GRN) & update inventory stock"
+                              >
+                                Receive GRN
+                              </button>
+                            )}
+
                             {isUnpaid ? (
                               <button
                                 onClick={() => setPayingPo(po)}
-                                className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs transition cursor-pointer shadow-sm"
+                                className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-[11px] transition cursor-pointer shadow-sm"
                               >
                                 Settle Payment
                               </button>
                             ) : (
-                              <span className="text-emerald-500 font-bold text-[11px] flex items-center justify-end gap-1">
-                                <CheckCircle2 className="w-3.5 h-3.5" /> Settle Verified
+                              <span className="text-emerald-500 font-bold text-[11px] inline-flex items-center gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Settled
                               </span>
+                            )}
+
+                            {onDeletePurchaseOrder && (
+                              <button
+                                onClick={() => {
+                                  if (confirm(`Are you sure you want to cancel & delete Purchase Order #${po.poNumber}?`)) {
+                                    onDeletePurchaseOrder(po.id);
+                                  }
+                                }}
+                                className="px-2 py-1 rounded-lg bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white font-bold text-[11px] transition cursor-pointer"
+                                title="Cancel & Delete PO"
+                              >
+                                Delete
+                              </button>
                             )}
                           </td>
                         </tr>
@@ -1420,6 +1607,316 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ISSUE NEW PURCHASE ORDER (ACCOUNTANT CONTROL) */}
+      {isNewPoModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className={`rounded-3xl max-w-2xl w-full p-6 shadow-2xl border max-h-[90vh] overflow-y-auto my-8 ${
+            darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+          }`}>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-bold text-lg flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-amber-500" />
+                <span>Issue New Purchase Order (Central Accountant Control)</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsNewPoModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg text-lg font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
+              All stock acquisitions, beverage purchases, kitchen supplies, and vendor invoices are authorized and recorded under Accountant Control.
+            </p>
+
+            <form onSubmit={handleCreateNewPo} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold mb-1">Supplier / Vendor Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newPoSupplier}
+                    onChange={e => setNewPoSupplier(e.target.value)}
+                    placeholder="e.g. Bralirwa Rwanda / Inyange Industries"
+                    className="w-full p-2.5 rounded-xl border bg-transparent text-xs focus:outline-none focus:border-amber-500 font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold mb-1">Department</label>
+                  <select
+                    value={newPoDepartment}
+                    onChange={e => {
+                      const d = e.target.value as any;
+                      setNewPoDepartment(d);
+                      setNewPoDestination(d === 'Kitchen' ? 'Kitchen Stock' : 'Main Beverage Stock');
+                    }}
+                    className="w-full p-2.5 rounded-xl border bg-transparent text-xs focus:outline-none focus:border-amber-500"
+                  >
+                    <option value="Bar / Beverage">Bar / Beverage Store</option>
+                    <option value="Kitchen">Kitchen & Restaurant</option>
+                    <option value="Housekeeping">Housekeeping & Amenities</option>
+                    <option value="Maintenance">Maintenance & General Store</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold mb-1">Payment Status</label>
+                  <select
+                    value={newPoPaymentStatus}
+                    onChange={e => setNewPoPaymentStatus(e.target.value as any)}
+                    className="w-full p-2.5 rounded-xl border bg-transparent text-xs focus:outline-none focus:border-amber-500 font-bold"
+                  >
+                    <option value="Unpaid">Unpaid (Supplier Credit Invoice)</option>
+                    <option value="Paid">Paid Immediately (Cash/Bank Outflow)</option>
+                  </select>
+                </div>
+
+                {newPoPaymentStatus === 'Paid' && (
+                  <div>
+                    <label className="block text-xs font-bold mb-1">Payment Channel</label>
+                    <select
+                      value={newPoPaymentMethod}
+                      onChange={e => setNewPoPaymentMethod(e.target.value as any)}
+                      className="w-full p-2.5 rounded-xl border bg-transparent text-xs focus:outline-none focus:border-amber-500"
+                    >
+                      <option value="Bank Transfer">Bank Transfer (BK / I&M)</option>
+                      <option value="MOMO">Mobile Money Pay</option>
+                      <option value="CASH">Petty Cash</option>
+                      <option value="CHEQUE">Bank Cheque</option>
+                    </select>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold mb-1">Inventory Intake Option</label>
+                  <label className="flex items-center gap-2 p-2 rounded-xl border border-slate-700 bg-slate-950/40 text-xs cursor-pointer mt-0.5">
+                    <input
+                      type="checkbox"
+                      checked={newPoAutoReceive}
+                      onChange={e => setNewPoAutoReceive(e.target.checked)}
+                      className="w-4 h-4 accent-amber-500 cursor-pointer"
+                    />
+                    <span className="font-bold text-[11px] text-emerald-400">Mark Goods Received (GRN) & Gain Stock</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* DRAFT LINE ITEMS BUILDER */}
+              <div className="p-4 rounded-2xl bg-slate-950/50 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <span className="text-xs font-bold uppercase text-amber-500 tracking-wider">
+                    Add Items to Purchase Order
+                  </span>
+                  <div className="flex items-center space-x-2 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setNewPoItemType('catalog')}
+                      className={`px-2.5 py-1 rounded-lg font-bold cursor-pointer ${
+                        newPoItemType === 'catalog' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Menu Catalog
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewPoItemType('ingredient')}
+                      className={`px-2.5 py-1 rounded-lg font-bold cursor-pointer ${
+                        newPoItemType === 'ingredient' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Recipe Ingredients
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewPoItemType('custom')}
+                      className={`px-2.5 py-1 rounded-lg font-bold cursor-pointer ${
+                        newPoItemType === 'custom' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Custom Item
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] font-bold mb-1 text-slate-400">Select Item / Item Name</label>
+                    {newPoItemType === 'catalog' && (
+                      <select
+                        value={newPoSelectedItemId}
+                        onChange={e => {
+                          const id = e.target.value;
+                          setNewPoSelectedItemId(id);
+                          const it = (menuItems || []).find(m => m.id === id);
+                          if (it) {
+                            setNewPoUnitCost(it.costPrice || Math.round(it.price * 0.6));
+                          }
+                        }}
+                        className="w-full p-2 rounded-xl border bg-slate-900 text-xs focus:outline-none focus:border-amber-500"
+                      >
+                        <option value="">-- Choose Menu / Beverage Item --</option>
+                        {(menuItems || []).map(m => (
+                          <option key={m.id} value={m.id}>
+                            {m.name} ({m.category}) - Stock: {m.stockQuantity || 0}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+
+                    {newPoItemType === 'ingredient' && (
+                      <select
+                        value={newPoSelectedItemId}
+                        onChange={e => {
+                          const id = e.target.value;
+                          setNewPoSelectedItemId(id);
+                          const ing = (ingredients || []).find(i => i.id === id);
+                          if (ing) {
+                            setNewPoUnitCost(ing.costPerUnit || 1000);
+                          }
+                        }}
+                        className="w-full p-2 rounded-xl border bg-slate-900 text-xs focus:outline-none focus:border-amber-500"
+                      >
+                        <option value="">-- Choose Raw Recipe Ingredient --</option>
+                        {(ingredients || []).map(i => (
+                          <option key={i.id} value={i.id}>
+                            {i.name} ({i.unit}) - Cost: RWF {i.costPerUnit}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+
+                    {newPoItemType === 'custom' && (
+                      <input
+                        type="text"
+                        value={newPoCustomName}
+                        onChange={e => setNewPoCustomName(e.target.value)}
+                        placeholder="e.g. Cleaning Detergent 5L / Gas Cylinder 15kg"
+                        className="w-full p-2 rounded-xl border bg-slate-900 text-xs focus:outline-none focus:border-amber-500"
+                      />
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold mb-1 text-slate-400">Qty</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={newPoQty}
+                      onChange={e => setNewPoQty(Number(e.target.value))}
+                      className="w-full p-2 rounded-xl border bg-slate-900 text-xs font-mono font-bold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold mb-1 text-slate-400">Unit Cost (RWF)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={newPoUnitCost}
+                      onChange={e => setNewPoUnitCost(Number(e.target.value))}
+                      className="w-full p-2 rounded-xl border bg-slate-900 text-xs font-mono font-bold text-amber-400"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center pt-1">
+                  <div className="text-xs font-mono text-slate-400">
+                    Subtotal: <strong className="text-emerald-400 font-bold">RWF {(newPoQty * newPoUnitCost).toLocaleString()}</strong>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddDraftPoItem}
+                    className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs cursor-pointer shadow-sm"
+                  >
+                    + Add Line Item
+                  </button>
+                </div>
+
+                {/* ADDED ITEMS LIST TABLE */}
+                {newPoItems.length > 0 && (
+                  <div className="mt-3 border-t border-slate-800 pt-3">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="text-slate-400 border-b border-slate-800 font-bold uppercase text-[10px]">
+                          <th className="p-1.5">Item Name</th>
+                          <th className="p-1.5">Category</th>
+                          <th className="p-1.5 text-center">Qty</th>
+                          <th className="p-1.5 text-right">Unit Cost</th>
+                          <th className="p-1.5 text-right">Total Cost</th>
+                          <th className="p-1.5 text-center">Remove</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800">
+                        {newPoItems.map((it, idx) => (
+                          <tr key={idx} className="hover:bg-amber-500/5">
+                            <td className="p-1.5 font-bold text-slate-200">{it.itemName}</td>
+                            <td className="p-1.5 text-slate-400 text-[11px]">{it.category}</td>
+                            <td className="p-1.5 text-center font-mono font-bold">{it.quantity}</td>
+                            <td className="p-1.5 text-right font-mono text-amber-400">RWF {it.unitCost.toLocaleString()}</td>
+                            <td className="p-1.5 text-right font-mono font-bold text-emerald-400">RWF {it.totalCost.toLocaleString()}</td>
+                            <td className="p-1.5 text-center">
+                              <button
+                                type="button"
+                                onClick={() => setNewPoItems(prev => prev.filter((_, i) => i !== idx))}
+                                className="text-rose-400 hover:text-rose-300 font-bold text-xs cursor-pointer"
+                              >
+                                ✕
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t border-amber-500/30 font-black text-amber-400">
+                          <td colSpan={4} className="p-2 uppercase text-right">TOTAL PURCHASE ORDER VALUE:</td>
+                          <td className="p-2 text-right text-sm">
+                            RWF {newPoItems.reduce((acc, i) => acc + i.totalCost, 0).toLocaleString()}
+                          </td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold mb-1">Accountant Notes / Purchase Justification</label>
+                <input
+                  type="text"
+                  value={newPoNotes}
+                  onChange={e => setNewPoNotes(e.target.value)}
+                  placeholder="e.g. Weekly beverage replenishment approved by Accountant"
+                  className="w-full p-2.5 rounded-xl border bg-transparent text-xs focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsNewPoModalOpen(false)}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 cursor-pointer shadow-lg flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Authorize & Issue Purchase Order (RWF {newPoItems.reduce((acc, i) => acc + i.totalCost, 0).toLocaleString()})</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

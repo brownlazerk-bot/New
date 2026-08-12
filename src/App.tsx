@@ -2258,6 +2258,7 @@ export default function App() {
           <AccountantControlCenter
             orders={orders}
             menuItems={menuItems}
+            ingredients={ingredients}
             purchaseOrders={purchaseOrders}
             expenses={expenses}
             cashMovements={cashMovements}
@@ -2265,7 +2266,11 @@ export default function App() {
             currentUser={currentUser}
             onAddExpense={handleAddExpense}
             onAddCashMovement={handleAddCashMovement}
+            onCreatePurchaseOrder={handleCreatePurchaseOrder}
+            onReceivePurchaseOrder={handleReceivePurchaseOrder}
+            onRevertPurchaseOrder={handleRevertPurchaseOrder}
             onEditPurchaseOrder={handleEditPurchaseOrder}
+            onDeletePurchaseOrder={handleDeletePurchaseOrder}
             onUpdateOrder={handleUpdateOrder}
             darkMode={darkMode}
           />
