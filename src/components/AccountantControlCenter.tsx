@@ -73,23 +73,23 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
   const [cashDesc, setCashDesc] = useState('');
 
   // Key KPI Calculations
-  const totalRevenue = orders
-    .filter(o => o.paymentStatus === 'PAID' && o.status !== 'Cancelled')
-    .reduce((acc, o) => acc + o.total, 0);
+  const totalRevenue = (orders || [])
+    .filter(o => o && o.paymentStatus === 'PAID' && o.status !== 'Cancelled')
+    .reduce((acc, o) => acc + (o.total || 0), 0);
 
-  const totalUnpaidReceivables = orders
-    .filter(o => o.paymentStatus !== 'PAID' && o.status !== 'Cancelled')
-    .reduce((acc, o) => acc + o.total, 0);
+  const totalUnpaidReceivables = (orders || [])
+    .filter(o => o && o.paymentStatus !== 'PAID' && o.status !== 'Cancelled')
+    .reduce((acc, o) => acc + (o.total || 0), 0);
 
-  const totalPayablesUnpaid = purchaseOrders
-    .filter(p => p.paymentStatus === 'Unpaid' || p.paymentStatus === 'Partially Paid')
-    .reduce((acc, p) => acc + p.totalAmount, 0);
+  const totalPayablesUnpaid = (purchaseOrders || [])
+    .filter(p => p && (p.paymentStatus === 'Unpaid' || p.paymentStatus === 'Partially Paid'))
+    .reduce((acc, p) => acc + (p.totalAmount || 0), 0);
 
-  const totalPurchaseSpend = purchaseOrders
-    .reduce((acc, p) => acc + p.totalAmount, 0);
+  const totalPurchaseSpend = (purchaseOrders || [])
+    .reduce((acc, p) => acc + (p.totalAmount || 0), 0);
 
-  const totalExpensesAmount = expenses
-    .reduce((acc, e) => acc + e.amount, 0);
+  const totalExpensesAmount = (expenses || [])
+    .reduce((acc, e) => acc + (e.amount || 0), 0);
 
   const netOperatingProfit = totalRevenue - totalExpensesAmount - totalPurchaseSpend;
 
@@ -481,34 +481,37 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {purchaseOrders.length === 0 ? (
+                {(purchaseOrders || []).length === 0 ? (
                   <tr>
                     <td colSpan={8} className="p-6 text-center text-slate-500">
                       No Purchase Orders recorded in system.
                     </td>
                   </tr>
                 ) : (
-                  purchaseOrders
-                    .filter(p => p.supplierName.toLowerCase().includes(searchQuery.toLowerCase()) || p.poNumber.toLowerCase().includes(searchQuery.toLowerCase()))
+                  (purchaseOrders || [])
+                    .filter(p => p && (
+                      (p.supplierName || '').toLowerCase().includes((searchQuery || '').toLowerCase()) || 
+                      (p.poNumber || '').toLowerCase().includes((searchQuery || '').toLowerCase())
+                    ))
                     .map(po => {
                       const isUnpaid = po.paymentStatus !== 'Paid';
                       return (
                         <tr key={po.id} className="hover:bg-amber-500/5 transition">
                           <td className="p-3 font-bold font-mono">
-                            {po.poNumber}
-                            <div className="text-[10px] text-slate-400 font-sans">{po.date}</div>
+                            {po.poNumber || 'PO-UNTITLED'}
+                            <div className="text-[10px] text-slate-400 font-sans">{po.date || ''}</div>
                           </td>
-                          <td className="p-3 font-bold text-amber-500">{po.supplierName}</td>
-                          <td className="p-3">{po.department}</td>
+                          <td className="p-3 font-bold text-amber-500">{po.supplierName || 'Unknown Supplier'}</td>
+                          <td className="p-3">{po.department || 'General'}</td>
                           <td className="p-3 max-w-xs">
                             {(po.items || []).map(it => (
-                              <div key={it.itemId || it.itemName} className="text-[11px] truncate">
-                                • {it.itemName} ({it.quantity} @ RWF {(it.unitCost || 0).toLocaleString()})
+                              <div key={it.itemId || it.itemName || Math.random()} className="text-[11px] truncate">
+                                • {it.itemName || 'Item'} ({it.quantity || 0} @ RWF {(it.unitCost || 0).toLocaleString()})
                               </div>
                             ))}
                           </td>
                           <td className="p-3 text-right font-black text-sm">
-                            RWF {po.totalAmount.toLocaleString()}
+                            RWF {(po.totalAmount || 0).toLocaleString()}
                           </td>
                           <td className="p-3 text-center">
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
@@ -585,30 +588,32 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {orders.filter(o => o.paymentStatus !== 'PAID' && o.status !== 'Cancelled').length === 0 ? (
+                {(orders || []).filter(o => o && o.paymentStatus !== 'PAID' && o.status !== 'Cancelled').length === 0 ? (
                   <tr>
                     <td colSpan={7} className="p-6 text-center text-slate-500">
                       No unpaid customer debts recorded.
                     </td>
                   </tr>
                 ) : (
-                  orders
-                    .filter(o => o.paymentStatus !== 'PAID' && o.status !== 'Cancelled')
+                  (orders || [])
+                    .filter(o => o && o.paymentStatus !== 'PAID' && o.status !== 'Cancelled')
                     .map(ord => (
                       <tr key={ord.id} className="hover:bg-amber-500/5 transition">
                         <td className="p-3 font-bold font-mono">
-                          {ord.orderNumber}
-                          <div className="text-[10px] text-slate-400 font-sans">{new Date(ord.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                          {ord.orderNumber || 'ORD-UNTITLED'}
+                          <div className="text-[10px] text-slate-400 font-sans">
+                            {ord.createdAt ? new Date(ord.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                          </div>
                         </td>
                         <td className="p-3 font-bold">
                           {ord.customerName || ord.roomNumber ? `Room ${ord.roomNumber}` : `Table ${ord.tableNumber || 'Bar'}`}
                         </td>
-                        <td className="p-3">{ord.waiterName || ord.cashierName}</td>
+                        <td className="p-3">{ord.waiterName || ord.cashierName || 'Staff'}</td>
                         <td className="p-3 max-w-xs truncate">
-                          {(ord.items || []).map(i => `${i.name} (x${i.quantity})`).join(', ')}
+                          {(ord.items || []).map(i => `${i.name || 'Item'} (x${i.quantity || 1})`).join(', ')}
                         </td>
                         <td className="p-3 text-right font-black text-rose-500 text-sm">
-                          RWF {ord.total.toLocaleString()}
+                          RWF {(ord.total || 0).toLocaleString()}
                         </td>
                         <td className="p-3 text-center">
                           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-500/20 text-amber-500">
@@ -806,16 +811,18 @@ export const AccountantControlCenter: React.FC<AccountantControlCenterProps> = (
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {menuItems.map(item => {
-                  const cost = item.costPrice || Math.round(item.price * 0.6);
-                  const profit = item.price - cost;
-                  const marginPct = item.price > 0 ? Math.round((profit / item.price) * 100) : 0;
+                {(menuItems || []).map(item => {
+                  if (!item) return null;
+                  const price = item.price || 0;
+                  const cost = item.costPrice || Math.round(price * 0.6);
+                  const profit = price - cost;
+                  const marginPct = price > 0 ? Math.round((profit / price) * 100) : 0;
                   return (
-                    <tr key={item.id} className="hover:bg-amber-500/5 transition">
-                      <td className="p-3 font-bold">{item.name}</td>
-                      <td className="p-3">{item.category}</td>
+                    <tr key={item.id || item.name} className="hover:bg-amber-500/5 transition">
+                      <td className="p-3 font-bold">{item.name || 'Unnamed Item'}</td>
+                      <td className="p-3">{item.category || 'General'}</td>
                       <td className="p-3 text-right font-mono">RWF {cost.toLocaleString()}</td>
-                      <td className="p-3 text-right font-mono font-bold">RWF {item.price.toLocaleString()}</td>
+                      <td className="p-3 text-right font-mono font-bold">RWF {price.toLocaleString()}</td>
                       <td className="p-3 text-right font-mono font-bold text-emerald-500">RWF {profit.toLocaleString()}</td>
                       <td className="p-3 text-center font-black">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] ${
