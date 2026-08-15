@@ -82,16 +82,160 @@ export interface Recipe {
   updatedBy?: string;
 }
 
-export interface Business {
-  id: string; // e.g. "biz-01"
-  name: string; // e.g. "Serene Hotel & Restaurant"
-  code: string;
-  phone?: string;
-  email?: string;
-  address?: string;
-  currency?: string;
+export type SaaSSubscriptionStatus = 'PENDING_PAYMENT' | 'ACTIVE' | 'EXPIRED' | 'GRACE_PERIOD' | 'SUSPENDED';
+export type SaaSPaymentStatus = 'PENDING' | 'SUCCESSFUL' | 'FAILED' | 'EXPIRED';
+export type SubscriptionPlanDuration = 'MONTHLY' | 'QUARTERLY' | 'SEMI_ANNUAL' | 'YEARLY';
+export type LicenseStatus = 'PENDING' | 'ACTIVE' | 'EXPIRED' | 'SUSPENDED' | 'REVOKED';
+
+export interface SubscriptionLicense {
+  id: string;
+  businessId: string;
+  businessName?: string;
+  subscriptionId?: string;
+  licenseCode: string; // e.g. "SVR7-X92K-4M8P"
+  licenseHash: string; // SHA-256 secure hash
+  plan: SubscriptionPlanDuration | string;
+  durationDays: number; // 30, 90, 180, 365
+  startDate?: string;
+  endDate?: string;
+  status: LicenseStatus;
+  activatedAt?: string;
+  expiresAt?: string;
+  createdBy: string;
   createdAt: string;
   updatedAt?: string;
+  notes?: string;
+}
+
+export interface Business {
+  id: string; // e.g. "biz-01"
+  name: string; // e.g. "Kigali Horizon Lounge & Resort"
+  code?: string;
+  category?: 'Hotel' | 'Restaurant' | 'Bar / Lounge' | 'Cafe' | 'Resort' | 'Nightclub' | 'Multi-Service Hospitality' | string;
+  type?: string;
+  ownerName: string;
+  phone?: string;
+  email?: string;
+  ownerEmail?: string;
+  ownerPhone?: string;
+  momoPaymentNumber?: string;
+  address?: string;
+  taxNumber?: string;
+  logoUrl?: string;
+  currency: string; // 'RWF'
+  status: SaaSSubscriptionStatus;
+  subscriptionId?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SubscriptionPaymentRecord {
+  id: string;
+  businessId: string;
+  amount: number; // 100,000 RWF
+  currency: string; // 'RWF'
+  paymentDate: string; // ISO
+  periodStartDate?: string; // ISO
+  periodEndDate?: string; // ISO
+  paymentMethod: 'MTN_MOMO' | 'MANUAL_OVERRIDE' | 'BANK_TRANSFER' | string;
+  momoNumber?: string; // '0726134041'
+  payerPhone?: string;
+  transactionReference: string; // Financial transaction ID / External ID
+  status: 'SUCCESS' | 'PENDING' | 'FAILED';
+  verificationSource?: 'MOMO_API_WEBHOOK' | 'MOMO_API_POLL' | 'SUPER_ADMIN_DIRECT_CONFIRM' | 'MOMO_STK_PUSH';
+  verifiedBy?: string;
+  verifiedAt?: string;
+  notes?: string;
+}
+
+export interface Subscription {
+  id: string; // e.g. "SUB-2026-001"
+  businessId: string;
+  businessName: string;
+  planName?: string; // "Monthly SaaS Business License"
+  plan?: string;
+  amount?: number; // 100000 (fixed 100,000 RWF)
+  monthlyFee?: number;
+  pricePerMonth?: number;
+  currency: 'RWF' | string;
+  status: SaaSSubscriptionStatus;
+  startDate?: string; // ISO string when activated
+  expiryDate?: string; // ISO string exactly 1 month after activation
+  expiresAt?: string;
+  nextBillingDate?: string;
+  gracePeriodDays?: number; // Default 0, configurable by Super Admin
+  graceExpiresAt?: string; // ISO string if grace period active
+  gracePeriodExpiresAt?: string;
+  paymentMethod?: 'MTN_MOMO' | 'MANUAL_OVERRIDE' | string;
+  momoNumber?: string; // '0726134041'
+  lastPaymentDate?: string;
+  paymentReference?: string;
+  lastPaymentReference?: string;
+  lastPaymentAmount?: number;
+  transactionReference?: string;
+  nextPaymentAmount?: number; // 100000
+  paymentHistory?: SubscriptionPaymentRecord[];
+  autoRenew?: boolean;
+  notes?: string;
+  remindersSent?: {
+    sevenDays?: boolean;
+    threeDays?: boolean;
+    oneDay?: boolean;
+    expired?: boolean;
+  };
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SubscriptionPayment {
+  id: string; // e.g. "PAY-2026-001"
+  businessId: string;
+  businessName: string;
+  subscriptionId: string;
+  amount: number; // 100000
+  currency: 'RWF';
+  paymentMethod: 'MTN MoMo (Rwanda)' | 'Super Admin Direct Override' | 'Bank Transfer';
+  payerPhone: string; // e.g. 078XXXXXXX
+  recipientPhone: string; // "0726134041"
+  paymentReference: string; // Unique reference ID generated for payment
+  transactionReference: string; // MTN MoMo financial transaction ID
+  status: SaaSPaymentStatus;
+  failureReason?: string;
+  paidAt?: string;
+  verifiedBy: 'MTN MoMo Gateway' | 'Super Admin Master Override' | 'Server Webhook' | 'System Automation';
+  durationMonths: number; // 1
+  createdAt: string;
+  rawMomoResponse?: Record<string, any>;
+}
+
+export interface SubscriptionOverrideRecord {
+  id: string;
+  businessId: string;
+  businessName: string;
+  grantedByAdmin: string;
+  adminEmail: string;
+  reason: string;
+  startDate: string;
+  expiryDate: string;
+  daysGranted: number;
+  timestamp: string;
+}
+
+export interface MomoApiConfig {
+  targetEnvironment?: 'sandbox' | 'live' | 'production';
+  environment?: 'sandbox' | 'production' | 'live';
+  subscriptionKey: string;
+  apiUser: string;
+  apiKey: string;
+  merchantPhone?: string; // "0726134041"
+  targetMomoNumber?: string;
+  currency: 'RWF' | string;
+  monthlyFee: number; // 100000
+  gracePeriodDays?: number;
+  callbackHost?: string;
+  enabled?: boolean;
+  lastVerifiedAt?: string;
+  webhookSecret?: string;
 }
 
 export type KitchenIngredientCategory = 
@@ -645,6 +789,20 @@ export type SystemRole =
 
 export type UserRole = SystemRole;
 
+export type UserAccessStatus = 'Approved' | 'Pending Payment' | 'Grace Period' | 'Payment Required' | 'Locked';
+export type UserPaymentStatus = 'Paid' | 'Unpaid' | 'Partial' | 'Pending Verification';
+
+export interface DeviceSessionInfo {
+  deviceType: 'Mobile' | 'Tablet' | 'Desktop';
+  browser: string;
+  os: string;
+  ip?: string;
+  lastActive: string;
+  sessionToken: string;
+  isOnline: boolean;
+  screenResolution?: string;
+}
+
 export interface AppUser {
   id: string;
   businessId?: string;
@@ -653,11 +811,25 @@ export interface AppUser {
   phone: string;
   role: SystemRole;
   status: 'Active' | 'Inactive' | 'Suspended';
-  passwordHash: string;
+  passwordHash?: string;
   pinCode?: string; // 4-digit quick PIN for POS terminal login
   createdAt: string;
   lastLoginAt?: string;
   isSuperAdmin?: boolean; // Hidden internal system marker
+  
+  // Super Admin Remote Control & Payment Licensing
+  accessStatus?: UserAccessStatus;
+  paymentStatus?: UserPaymentStatus;
+  paymentAmountDue?: number;
+  paymentNotes?: string;
+  accessExpiresAt?: string; // ISO timestamp for Grace Period or Subscription Expiration
+  gracePeriodDays?: number;
+  authorizedBySuperAdmin?: boolean;
+  authorizedAt?: string;
+  
+  // Remote Device Monitoring
+  deviceInfo?: DeviceSessionInfo;
+  sessionRevoked?: boolean;
 }
 
 export type User = AppUser;

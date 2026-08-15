@@ -23,10 +23,14 @@ import {
   loadPurchaseOrders, savePurchaseOrders, loadIngredients, saveIngredients,
   loadStockMovementRecords, saveStockMovementRecords, addStockMovementRecord,
   loadWasteRecords, saveWasteRecords, addWasteRecord,
-  loadRecipes, saveRecipes
+  loadRecipes, saveRecipes,
+  loadCurrentBusiness, saveCurrentBusiness, loadSubscriptions, saveSubscriptions,
+  evaluateSubscriptionMetrics
 } from './lib/storage';
+import { getCurrentUser, logoutUser, onAuthStateChange } from './lib/auth';
 import { convertRecipeQtyToStoreQty, calculateEffectiveRecipeQty } from './lib/unitConversion';
 import { exportShiftReportPDF } from './lib/exporter';
+import { Business, Subscription } from './types';
 
 import { Header } from './components/Header';
 import { Navigation, TabType } from './components/Navigation';
@@ -55,6 +59,13 @@ import { ApprovalWorkflowCenter } from './components/ApprovalWorkflowCenter';
 import { AccountantControlCenter } from './components/AccountantControlCenter';
 import { InAppNotificationDrawer } from './components/InAppNotificationDrawer';
 import { ManualReportSendModal } from './components/ManualReportSendModal';
+import { PaymentAuthorizationGate } from './components/PaymentAuthorizationGate';
+import { SubscriptionPaymentGate } from './components/SubscriptionPaymentGate';
+import { PaymentsAndSubscriptionView } from './components/PaymentsAndSubscriptionView';
+import { SuperAdminSaaSControl } from './components/SuperAdminSaaSControl';
+import { SuperAdminControlCenter } from './components/SuperAdminControlCenter';
+import { SubscriptionReminderBanner } from './components/SubscriptionReminderBanner';
+import { loadUsers } from './lib/storage';
 import { subscribeToSync, createDailyBackup, flushOfflineQueue } from './lib/syncEngine';
 import { startServerSyncPolling, pullServerState } from './lib/serverSync';
 import { startSupabaseSyncPolling, pullAllFromSupabase } from './lib/supabaseSync';
@@ -91,6 +102,8 @@ export default function App() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [stockMovements, setStockMovements] = useState<StockMovementRecord[]>([]);
   const [wasteRecords, setWasteRecords] = useState<KitchenWasteRecord[]>([]);
+  const [currentBusiness, setCurrentBusiness] = useState<Business>(() => loadCurrentBusiness());
+  const [subscriptionsList, setSubscriptionsList] = useState<Subscription[]>(() => loadSubscriptions());
 
   // Receipt & Notification Drawer State
   const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
@@ -119,20 +132,42 @@ export default function App() {
     setRecipes(loadRecipes());
     setStockMovements(loadStockMovementRecords());
     setWasteRecords(loadWasteRecords());
+    setCurrentBusiness(loadCurrentBusiness());
+    setSubscriptionsList(loadSubscriptions());
   };
 
   // Load Initial Data, Sync Engine, Online/Offline & Auto-Backup
   useEffect(() => {
-    const loggedInUser = loadCurrentUser();
-    if (loggedInUser) {
-      setCurrentUser(loggedInUser);
-      setUserRole(loggedInUser.role);
-    }
+    // Restore session from Supabase/Auth
+    getCurrentUser().then(({ user, business, subscription }) => {
+      if (user) {
+        setCurrentUser(user);
+        setUserRole(user.role as any);
+      }
+      if (business) {
+        setCurrentBusiness(business);
+      }
+    });
 
     refreshAllStateFromStorage();
 
+    // Listen to Supabase auth state change (e.g. cross-tab signin/signout)
+    const authSubscription = onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setCurrentUser(null);
+      } else if (event === 'SIGNED_IN' && session?.user) {
+        getCurrentUser().then(({ user }) => {
+          if (user) {
+            setCurrentUser(user);
+            setUserRole(user.role as any);
+          }
+        });
+      }
+    });
+
     // Trigger daily backup
     try {
+      const loggedInUser = loadCurrentUser();
       createDailyBackup(loggedInUser?.fullName || 'System Auto-Backup');
     } catch (e) {
       // Backup fallback
@@ -181,6 +216,9 @@ export default function App() {
     window.addEventListener('offline', handleOffline);
 
     return () => {
+      if (authSubscription && typeof authSubscription.unsubscribe === 'function') {
+        authSubscription.unsubscribe();
+      }
       unsubscribeSync();
       stopServerPolling();
       stopSupabasePolling();
@@ -197,18 +235,8 @@ export default function App() {
     const resetInactivityTimer = () => {
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
-        addAuditLog({
-          userId: currentUser.id,
-          userName: currentUser.fullName,
-          userRole: currentUser.role,
-          userEmail: currentUser.email,
-          action: 'Auto-Logout',
-          category: 'Auth',
-          details: 'User automatically logged out due to 15 minutes of inactivity'
-        });
-        clearCurrentUser();
+        logoutUser();
         setCurrentUser(null);
-        alert('Security Alert: You have been logged out due to 15 minutes of inactivity.');
       }, 15 * 60 * 1000);
     };
 
@@ -233,19 +261,8 @@ export default function App() {
     setUserRole(user.role as any);
   };
 
-  const handleLogout = () => {
-    if (currentUser) {
-      addAuditLog({
-        userId: currentUser.id,
-        userName: currentUser.fullName,
-        userRole: currentUser.role,
-        userEmail: currentUser.email,
-        action: 'User Logout',
-        category: 'Auth',
-        details: 'User logged out of session'
-      });
-    }
-    clearCurrentUser();
+  const handleLogout = async () => {
+    await logoutUser();
     setCurrentUser(null);
   };
 
@@ -2092,15 +2109,68 @@ export default function App() {
   };
 
   const handleResetData = () => {
-    if (confirm('Are you sure you want to reset all data?')) {
-      resetAllDataToDefault();
-      window.location.reload();
+    const isSuperAdmin = Boolean(currentUser?.isSuperAdmin || currentUser?.role === 'Super Admin');
+
+    if (!isSuperAdmin) {
+      alert('Access Denied: Resetting system data is restricted to the Super Admin only.');
+      return;
+    }
+
+    if (confirm('CRITICAL WARNING: Are you sure you want to reset all system data to default? This will wipe transactions, orders, shifts, and reset to clean factory state.')) {
+      const ok = resetAllDataToDefault(currentUser);
+      if (ok) {
+        window.location.reload();
+      }
     }
   };
 
   // Unauthenticated Guard
   if (!currentUser) {
     return <LoginView onLoginSuccess={handleLoginSuccess} darkMode={darkMode} />;
+  }
+
+  // Super Admin check for payment gate bypass
+  const isSuperAdminUser = Boolean(currentUser.isSuperAdmin || currentUser.role === 'Super Admin');
+
+  // Active Business & Subscription metrics
+  const activeSub = subscriptionsList.find(s => s.businessId === currentBusiness?.id) || subscriptionsList[0];
+  const subMetrics = evaluateSubscriptionMetrics(activeSub);
+
+  // Business Subscription Gate Guard:
+  // Non-super-admin is blocked if the business subscription is PENDING_PAYMENT or EXPIRED
+  const isSubscriptionBlocked = !isSuperAdminUser && (
+    currentBusiness?.status === 'PENDING_PAYMENT' ||
+    currentBusiness?.status === 'EXPIRED' ||
+    subMetrics.status === 'PENDING_PAYMENT' ||
+    subMetrics.status === 'EXPIRED'
+  );
+
+  // Legacy user-level lock check
+  const isGraceExpired = currentUser.accessStatus === 'Grace Period' && 
+                         currentUser.accessExpiresAt && 
+                         new Date(currentUser.accessExpiresAt).getTime() < Date.now();
+
+  const isAccessBlocked = !isSuperAdminUser && (
+    currentUser.accessStatus === 'Pending Payment' ||
+    currentUser.accessStatus === 'Payment Required' ||
+    currentUser.accessStatus === 'Locked' ||
+    isGraceExpired
+  );
+
+  if (isSubscriptionBlocked || isAccessBlocked) {
+    return (
+      <SubscriptionPaymentGate
+        currentUser={currentUser}
+        currentBusiness={currentBusiness}
+        onSubscriptionActivated={(updatedBiz, updatedSub) => {
+          setCurrentBusiness(updatedBiz);
+          setSubscriptionsList(loadSubscriptions());
+          refreshAllStateFromStorage();
+        }}
+        onLogout={handleLogout}
+        darkMode={darkMode}
+      />
+    );
   }
 
   // Pending counts
@@ -2191,6 +2261,14 @@ export default function App() {
 
       {/* Primary Module Workspace */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+        {/* Subscription Expiration Reminder Banner */}
+        <div className="mb-4">
+          <SubscriptionReminderBanner
+            subscription={activeSub}
+            onOpenRenew={() => setActiveTab('subscriptions')}
+          />
+        </div>
 
         {/* Live Waiter Order Notification Banner for Cashiers */}
         {pendingWaiterOrders.length > 0 && (userRole === 'Cashier' || userRole === 'Super Admin' || userRole === 'Admin' || userRole === 'Manager') && (
@@ -2457,6 +2535,22 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'subscriptions' && (
+          <PaymentsAndSubscriptionView
+            currentUser={currentUser}
+            darkMode={darkMode}
+          />
+        )}
+
+        {activeTab === 'saas_admin' && isSuperAdminUser && (
+          <SuperAdminControlCenter
+            currentUser={currentUser}
+            onLogout={handleLogout}
+            darkMode={darkMode}
+            onToggleDarkMode={() => setDarkMode(!darkMode)}
+          />
+        )}
+
         {activeTab === 'products_services' && (userRole === 'Manager' || userRole === 'Super Admin' || userRole === 'Admin' || userRole === 'Accountant') && (
           <ProductServiceManager
             menuItems={menuItems}
@@ -2483,6 +2577,7 @@ export default function App() {
           <ManagerSettings
             menuItems={menuItems}
             waiters={waiters}
+            currentUser={currentUser}
             onSaveMenuItem={handleSaveMenuItem}
             onDeleteMenuItem={handleDeleteMenuItem}
             onSaveWaiter={handleSaveWaiter}

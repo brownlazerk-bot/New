@@ -4,7 +4,7 @@ import {
   RotateCcw, Save, Wine, UserCheck, AlertCircle, Database, Download, Upload, CheckCircle2,
   Cloud, CloudLightning, Copy, RefreshCw, Key, Globe, Check
 } from 'lucide-react';
-import { MenuItem, Waiter, Category, ItemStatus } from '../types';
+import { MenuItem, Waiter, Category, ItemStatus, AppUser } from '../types';
 import { createDailyBackup, loadBackups, restoreBackupSnapshot, DatabaseBackup } from '../lib/syncEngine';
 import { 
   getSupabaseConfig, saveSupabaseConfig, testSupabaseConnection, 
@@ -14,6 +14,7 @@ import {
 interface ManagerSettingsProps {
   menuItems: MenuItem[];
   waiters: Waiter[];
+  currentUser?: AppUser | null;
   onSaveMenuItem: (item: MenuItem) => void;
   onDeleteMenuItem: (itemId: string) => void;
   onSaveWaiter: (waiter: Waiter) => void;
@@ -24,12 +25,14 @@ interface ManagerSettingsProps {
 export const ManagerSettings: React.FC<ManagerSettingsProps> = ({
   menuItems,
   waiters,
+  currentUser,
   onSaveMenuItem,
   onDeleteMenuItem,
   onSaveWaiter,
   onResetData,
   darkMode
 }) => {
+  const isSuperAdmin = Boolean(currentUser?.isSuperAdmin || currentUser?.role === 'Super Admin');
   const [activeTab, setActiveTab] = useState<'menu' | 'waiters' | 'security' | 'backups' | 'supabase'>('menu');
   const [backups, setBackups] = useState<DatabaseBackup[]>([]);
   const [backupMsg, setBackupMsg] = useState<string>('');
@@ -364,15 +367,43 @@ export const ManagerSettings: React.FC<ManagerSettingsProps> = ({
           </div>
 
           <div className="pt-4 border-t border-gray-200 dark:border-gray-800">
-            <h4 className="font-bold text-sm text-rose-600 dark:text-rose-400 mb-1">Reset Demo Database</h4>
-            <p className="text-xs text-gray-500 mb-3">Clear local state and restore factory demo menu items, tables, and stock levels.</p>
-            <button
-              onClick={onResetData}
-              className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center space-x-2"
-            >
-              <RotateCcw className="w-4 h-4" />
-              <span>Reset All Data to Demo Default</span>
-            </button>
+            <div className="flex items-center space-x-2 mb-2">
+              <h4 className="font-bold text-sm text-rose-600 dark:text-rose-400">System Factory Data Reset</h4>
+              {isSuperAdmin ? (
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                  Super Admin Authorized
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                  Super Admin Only
+                </span>
+              )}
+            </div>
+
+            {isSuperAdmin ? (
+              <div className="space-y-3">
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  As the Super Admin (System Owner), you have master authority to reset database tables, default menu items, tables, and stock levels to clean factory state.
+                </p>
+                <button
+                  onClick={onResetData}
+                  className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center space-x-2 shadow-md shadow-rose-600/20 cursor-pointer"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Reset All Data to Demo Default (Super Admin Master)</span>
+                </button>
+              </div>
+            ) : (
+              <div className="p-4 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs space-y-1.5">
+                <p className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Shield className="w-4 h-4 text-amber-500" />
+                  <span>Factory Data Reset Locked</span>
+                </p>
+                <p className="text-slate-500 dark:text-slate-400 leading-relaxed">
+                  Resetting all system data and database records is strictly restricted to authorized <strong>Super Admin</strong> accounts. Standard Managers and Administrators cannot perform factory data wipes.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}

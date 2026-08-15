@@ -87,14 +87,14 @@ export const Header: React.FC<HeaderProps> = ({
               <div>
                 <div className="flex items-center space-x-2">
                   <h1 className="font-black text-lg tracking-tight leading-tight">
-                    SKY VIEW RESORT
+                    YUSKAR MANAGEMENT SYSTEM
                   </h1>
                   <span className="text-[10px] px-2 py-0.5 rounded-full font-extrabold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
-                    RWF SYSTEM
+                    ENTERPRISE
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                  Hotel & Resort Operations
+                  Hotel, Restaurant & POS Operations
                 </p>
               </div>
             </div>

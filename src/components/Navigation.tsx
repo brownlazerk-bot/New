@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Receipt, ShoppingCart, UtensilsCrossed, ChefHat, 
   Waves, PackageCheck, ReceiptText, FileBarChart, Settings, Users, ShieldCheck,
   Package, Boxes, Utensils, BookOpen, MessageSquare, Bell, CheckSquare,
-  UserCheck, Banknote, Briefcase
+  UserCheck, Banknote, Briefcase, CreditCard, KeyRound, Globe
 } from 'lucide-react';
 import { UserRole } from '../types';
 import { Language, getTranslation } from '../lib/translations';
@@ -26,6 +26,8 @@ export type TabType =
   | 'whatsapp_reports'
   | 'notifications'
   | 'approvals'
+  | 'subscriptions'
+  | 'saas_admin'
   | 'products_services'
   | 'users'
   | 'audit_logs'
@@ -53,6 +55,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   language = 'rw'
 }) => {
   const isManagerOrAdmin = userRole === 'Manager' || userRole === 'Super Admin' || userRole === 'Admin' || userRole === 'Accountant';
+  const isSuperAdmin = userRole === 'Super Admin';
   const t = getTranslation(language);
 
   const navItems = [
@@ -91,6 +94,8 @@ export const Navigation: React.FC<NavigationProps> = ({
     { id: 'whatsapp_reports' as TabType, label: 'WhatsApp Automation', icon: MessageSquare, managerOnly: true },
     { id: 'notifications' as TabType, label: 'Notifications', icon: Bell },
     { id: 'approvals' as TabType, label: 'Approvals Engine', icon: CheckSquare },
+    { id: 'subscriptions' as TabType, label: 'Payments & Subscription', icon: CreditCard, managerOnly: true },
+    { id: 'saas_admin' as TabType, label: 'SaaS Super Admin', icon: KeyRound, superAdminOnly: true },
     { id: 'products_services' as TabType, label: t.productsServices, icon: Package, managerOnly: true },
     { id: 'users' as TabType, label: t.userAdmin, icon: Users, managerOnly: true },
     { id: 'audit_logs' as TabType, label: t.auditLogs, icon: ShieldCheck, managerOnly: true },
@@ -106,6 +111,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex space-x-1 sm:space-x-2 overflow-x-auto no-scrollbar py-2">
           {navItems.map((item) => {
+            if (item.superAdminOnly && !isSuperAdmin) return null;
             if (item.managerOnly && !isManagerOrAdmin) return null;
             const Icon = item.icon;
             const isActive = activeTab === item.id;

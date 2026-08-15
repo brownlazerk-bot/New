@@ -5,7 +5,8 @@ import {
   StockMovementRecord, KitchenWasteRecord, Recipe,
   WhatsAppSettings, WhatsAppRecipient, ReportDeliveryRule, ReportDeliveryHistory,
   MessageTemplate, NotificationItem, NotificationRule, ApprovalRule, ApprovalRequest,
-  Employee, SalaryAdvance, PayrollRecord, AttendanceRecord
+  Employee, SalaryAdvance, PayrollRecord, AttendanceRecord,
+  Business, Subscription, SubscriptionPayment, SubscriptionOverrideRecord, MomoApiConfig
 } from '../types';
 import { 
   INITIAL_MENU_ITEMS, INITIAL_TABLES, INITIAL_WAITERS, 
@@ -67,18 +68,11 @@ const KEYS = {
   PAYROLL_RECORDS: 'hotel_payroll_records_prod',
   ATTENDANCE_RECORDS: 'hotel_attendance_records_prod',
   POS_DEPOSITS: 'hotel_pos_deposits_prod',
-};
-
-export const SUPER_ADMIN_CREDENTIALS: AppUser = {
-  id: 'super-admin-internal-01',
-  fullName: 'System Owner',
-  email: 'yuskar@gmail.com',
-  phone: '+250 780 000 000',
-  role: 'Super Admin',
-  status: 'Active',
-  passwordHash: 'Pksquare@1',
-  createdAt: new Date().toISOString(),
-  isSuperAdmin: true
+  SUBSCRIPTIONS: 'hotel_subscriptions_prod',
+  SUBSCRIPTION_PAYMENTS: 'hotel_subscription_payments_prod',
+  SUBSCRIPTION_OVERRIDES: 'hotel_subscription_overrides_prod',
+  CURRENT_BUSINESS: 'hotel_current_business_prod',
+  MOMO_CONFIG: 'hotel_momo_config_prod'
 };
 
 // Ensure legacy sample keys are cleared without erasing current production keys
@@ -290,7 +284,9 @@ export const INITIAL_STAFF_USERS: AppUser[] = [
     phone: '+250 788 111 222',
     role: 'Cashier',
     status: 'Active',
-    passwordHash: 'Cashier@123',
+    accessStatus: 'Approved',
+    paymentStatus: 'Paid',
+    authorizedBySuperAdmin: true,
     pinCode: '1234',
     createdAt: new Date().toISOString()
   },
@@ -301,7 +297,9 @@ export const INITIAL_STAFF_USERS: AppUser[] = [
     phone: '+250 788 333 444',
     role: 'Kitchen',
     status: 'Active',
-    passwordHash: 'Kitchen@123',
+    accessStatus: 'Approved',
+    paymentStatus: 'Paid',
+    authorizedBySuperAdmin: true,
     pinCode: '2345',
     createdAt: new Date().toISOString()
   },
@@ -312,7 +310,9 @@ export const INITIAL_STAFF_USERS: AppUser[] = [
     phone: '+250 788 555 666',
     role: 'Receptionist',
     status: 'Active',
-    passwordHash: 'Reception@123',
+    accessStatus: 'Approved',
+    paymentStatus: 'Paid',
+    authorizedBySuperAdmin: true,
     pinCode: '3456',
     createdAt: new Date().toISOString()
   },
@@ -323,7 +323,9 @@ export const INITIAL_STAFF_USERS: AppUser[] = [
     phone: '+250 788 777 888',
     role: 'Accountant',
     status: 'Active',
-    passwordHash: 'Accountant@123',
+    accessStatus: 'Approved',
+    paymentStatus: 'Paid',
+    authorizedBySuperAdmin: true,
     pinCode: '4567',
     createdAt: new Date().toISOString()
   },
@@ -334,7 +336,9 @@ export const INITIAL_STAFF_USERS: AppUser[] = [
     phone: '+250 788 999 000',
     role: 'Manager',
     status: 'Active',
-    passwordHash: 'Manager@123',
+    accessStatus: 'Approved',
+    paymentStatus: 'Paid',
+    authorizedBySuperAdmin: true,
     pinCode: '5678',
     createdAt: new Date().toISOString()
   }
@@ -343,13 +347,75 @@ export const INITIAL_STAFF_USERS: AppUser[] = [
 // User Management Functions
 export function loadUsers(): AppUser[] {
   const users = getStorage<AppUser[]>(KEYS.USERS, INITIAL_STAFF_USERS);
-  // ALWAYS filter out Super Admin if somehow saved, to keep Super Admin strictly hidden
-  return users.filter(u => u.email.toLowerCase() !== SUPER_ADMIN_CREDENTIALS.email.toLowerCase() && !u.isSuperAdmin);
+  // ALWAYS filter out Super Admin to keep Super Admin strictly system-level and database-managed
+  return users.filter(u => !u.isSuperAdmin && u.role !== 'Super Admin');
 }
 
 export function saveUsers(users: AppUser[]): void {
-  const filteredUsers = users.filter(u => u.email.toLowerCase() !== SUPER_ADMIN_CREDENTIALS.email.toLowerCase() && !u.isSuperAdmin);
+  const filteredUsers = users.filter(u => !u.isSuperAdmin && u.role !== 'Super Admin');
   setStorage(KEYS.USERS, filteredUsers);
+}
+
+/**
+ * Super Admin Device & Payment Authorization Helpers
+ */
+export function updateUserAccessAndPayment(userId: string, updates: Partial<AppUser>): void {
+  const users = loadUsers();
+  const updated = users.map(u => {
+    if (u.id === userId) {
+      return { ...u, ...updates };
+    }
+    return u;
+  });
+  saveUsers(updated);
+
+  // If current logged in user is the updated user, update session as well
+  const current = loadCurrentUser();
+  if (current && current.id === userId) {
+    saveCurrentUser({ ...current, ...updates });
+  }
+}
+
+export function grantUserGracePeriod(userId: string, days: number = 7, notes: string = 'Grace period granted by Super Admin to use system while completing payment'): void {
+  const expires = new Date();
+  expires.setDate(expires.getDate() + days);
+
+  updateUserAccessAndPayment(userId, {
+    accessStatus: 'Grace Period',
+    gracePeriodDays: days,
+    accessExpiresAt: expires.toISOString(),
+    paymentNotes: notes,
+    authorizedBySuperAdmin: true,
+    authorizedAt: new Date().toISOString(),
+    sessionRevoked: false
+  });
+}
+
+export function approveUserPaymentAccess(userId: string, notes: string = 'Payment verified and full access authorized by Super Admin'): void {
+  updateUserAccessAndPayment(userId, {
+    accessStatus: 'Approved',
+    paymentStatus: 'Paid',
+    paymentNotes: notes,
+    authorizedBySuperAdmin: true,
+    authorizedAt: new Date().toISOString(),
+    accessExpiresAt: undefined,
+    sessionRevoked: false
+  });
+}
+
+export function lockUserAccess(userId: string, reason: string = 'Payment required / Account locked by Super Admin'): void {
+  updateUserAccessAndPayment(userId, {
+    accessStatus: 'Locked',
+    paymentStatus: 'Unpaid',
+    paymentNotes: reason,
+    sessionRevoked: true
+  });
+}
+
+export function revokeUserSession(userId: string): void {
+  updateUserAccessAndPayment(userId, {
+    sessionRevoked: true
+  });
 }
 
 // Audit Logs Functions
@@ -745,7 +811,272 @@ export function addPOSDeposit(dep: Omit<POSDepositRecord, 'id' | 'depositNumber'
   return newDep;
 }
 
-export function resetAllDataToDefault(): void {
+export function resetAllDataToDefault(initiatingUser?: AppUser | null): boolean {
+  const user = initiatingUser || loadCurrentUser();
+  const isSuperAdmin = Boolean(user?.isSuperAdmin || user?.role === 'Super Admin');
+
+  if (!isSuperAdmin) {
+    console.error('Unauthorized attempt to reset all system data. Only Super Admin can reset data.');
+    return false;
+  }
+
   localStorage.clear();
   initializeCleanSlateIfNeeded();
+  return true;
+}
+
+// ==========================================
+// SAAS SUBSCRIPTION & MTN MOMO CLIENT HELPERS
+// ==========================================
+
+export const SAAS_MONTHLY_FEE = 100000; // 100,000 RWF
+export const SAAS_MOMO_MERCHANT_NUMBER = '0726134041'; // Official fixed MTN MoMo recipient
+
+export const INITIAL_BUSINESS: Business = {
+  id: 'biz-primary-01',
+  name: 'Kigali Horizon Lounge & Resort',
+  code: 'BIZ-1001',
+  category: 'Hotel',
+  ownerName: 'System Owner',
+  phone: '+250 726 134 041',
+  email: 'yuskar@gmail.com',
+  momoPaymentNumber: '0726134041',
+  address: 'KG 15 Ave, Kigali, Rwanda',
+  currency: 'RWF',
+  status: 'ACTIVE',
+  subscriptionId: 'SUB-2026-001',
+  createdAt: '2026-08-14T00:00:00.000Z'
+};
+
+export const INITIAL_SUBSCRIPTION: Subscription = {
+  id: 'SUB-2026-001',
+  businessId: 'biz-primary-01',
+  businessName: 'Kigali Horizon Lounge & Resort',
+  planName: 'Monthly SaaS Business License',
+  amount: 100000,
+  currency: 'RWF',
+  status: 'ACTIVE',
+  startDate: '2026-08-14T00:00:00.000Z',
+  expiryDate: '2026-09-14T00:00:00.000Z',
+  gracePeriodDays: 0,
+  lastPaymentDate: '2026-08-14T00:00:00.000Z',
+  paymentReference: 'MOMO-RW-20260814-INIT',
+  transactionReference: 'TXN-MOMO-RW-20260814-INIT',
+  nextPaymentAmount: 100000,
+  createdAt: '2026-08-14T00:00:00.000Z'
+};
+
+export function loadBusinesses(): Business[] {
+  return getStorage<Business[]>(KEYS.BUSINESSES, [INITIAL_BUSINESS]);
+}
+
+export function saveBusinesses(businesses: Business[]): void {
+  setStorage(KEYS.BUSINESSES, businesses);
+}
+
+export function loadCurrentBusiness(): Business {
+  const current = getStorage<Business | null>(KEYS.CURRENT_BUSINESS, null);
+  if (current) return current;
+  const list = loadBusinesses();
+  const first = list[0] || INITIAL_BUSINESS;
+  saveCurrentBusiness(first);
+  return first;
+}
+
+export function saveCurrentBusiness(business: Business): void {
+  setStorage(KEYS.CURRENT_BUSINESS, business);
+}
+
+export function loadSubscriptions(): Subscription[] {
+  return getStorage<Subscription[]>(KEYS.SUBSCRIPTIONS, [INITIAL_SUBSCRIPTION]);
+}
+
+export function saveSubscriptions(subscriptions: Subscription[]): void {
+  setStorage(KEYS.SUBSCRIPTIONS, subscriptions);
+}
+
+export function loadSubscriptionPayments(): SubscriptionPayment[] {
+  const initialPayments: SubscriptionPayment[] = [
+    {
+      id: 'PAY-2026-001',
+      businessId: 'biz-primary-01',
+      businessName: 'Kigali Horizon Lounge & Resort',
+      subscriptionId: 'SUB-2026-001',
+      amount: 100000,
+      currency: 'RWF',
+      paymentMethod: 'MTN MoMo (Rwanda)',
+      payerPhone: '0788123456',
+      recipientPhone: '0726134041',
+      paymentReference: 'MOMO-RW-20260814-INIT',
+      transactionReference: 'TXN-MOMO-RW-20260814-INIT',
+      status: 'SUCCESSFUL',
+      paidAt: '2026-08-14T08:00:00.000Z',
+      verifiedBy: 'MTN MoMo Gateway',
+      durationMonths: 1,
+      createdAt: '2026-08-14T08:00:00.000Z'
+    }
+  ];
+  return getStorage<SubscriptionPayment[]>(KEYS.SUBSCRIPTION_PAYMENTS, initialPayments);
+}
+
+export function saveSubscriptionPayments(payments: SubscriptionPayment[]): void {
+  setStorage(KEYS.SUBSCRIPTION_PAYMENTS, payments);
+}
+
+export function loadSubscriptionOverrides(): SubscriptionOverrideRecord[] {
+  return getStorage<SubscriptionOverrideRecord[]>(KEYS.SUBSCRIPTION_OVERRIDES, []);
+}
+
+export function saveSubscriptionOverrides(overrides: SubscriptionOverrideRecord[]): void {
+  setStorage(KEYS.SUBSCRIPTION_OVERRIDES, overrides);
+}
+
+export function evaluateSubscriptionMetrics(sub?: Subscription | null) {
+  if (!sub || sub.status === 'PENDING_PAYMENT') {
+    return {
+      status: 'PENDING_PAYMENT' as const,
+      daysRemaining: 0,
+      isGrace: false,
+      warningLevel: 'expired' as const,
+      message: 'Initial subscription payment required (100,000 RWF via MTN MoMo 0726134041).'
+    };
+  }
+
+  if (!sub.expiryDate) {
+    return {
+      status: 'EXPIRED' as const,
+      daysRemaining: 0,
+      isGrace: false,
+      warningLevel: 'expired' as const,
+      message: 'Subscription has expired. Please renew for 100,000 RWF.'
+    };
+  }
+
+  const now = Date.now();
+  const exp = new Date(sub.expiryDate).getTime();
+  const diffTime = exp - now;
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  const graceDays = sub.gracePeriodDays || 0;
+  const graceExp = exp + (graceDays * 24 * 60 * 60 * 1000);
+
+  if (now <= exp) {
+    let warningLevel: '7days' | '3days' | '1day' | 'none' = 'none';
+    let message = `Subscription active. ${diffDays} days remaining.`;
+
+    if (diffDays <= 1) {
+      warningLevel = '1day';
+      message = 'Your subscription expires tomorrow! Please renew for 100,000 RWF to avoid service interruption.';
+    } else if (diffDays <= 3) {
+      warningLevel = '3days';
+      message = `Your subscription expires in ${diffDays} days. Please renew for 100,000 RWF to avoid interruption.`;
+    } else if (diffDays <= 7) {
+      warningLevel = '7days';
+      message = `Your subscription expires in ${diffDays} days. Early renewal available.`;
+    }
+
+    return {
+      status: 'ACTIVE' as const,
+      daysRemaining: Math.max(0, diffDays),
+      isGrace: false,
+      warningLevel,
+      message
+    };
+  } else if (now <= graceExp) {
+    const graceDiffDays = Math.ceil((graceExp - now) / (1000 * 60 * 60 * 24));
+    return {
+      status: 'GRACE_PERIOD' as const,
+      daysRemaining: Math.max(0, graceDiffDays),
+      isGrace: true,
+      warningLevel: '1day' as const,
+      message: `Account in Grace Period (${graceDiffDays} days remaining). Please settle payment of 100,000 RWF.`
+    };
+  } else {
+    return {
+      status: 'EXPIRED' as const,
+      daysRemaining: 0,
+      isGrace: false,
+      warningLevel: 'expired' as const,
+      message: 'Your subscription has expired. Please renew for 100,000 RWF to continue using the system.'
+    };
+  }
+}
+
+// API Functions for Backend Communication
+export async function apiRegisterBusiness(data: {
+  businessName: string;
+  ownerName: string;
+  email: string;
+  phone: string;
+  password: string;
+  category?: string;
+  address?: string;
+}) {
+  const res = await fetch('/api/subscription/register-business', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  return await res.json();
+}
+
+export async function apiInitiateMomoPayment(businessId: string, payerPhone: string) {
+  const res = await fetch('/api/subscription/momo/initiate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ businessId, payerPhone })
+  });
+  return await res.json();
+}
+
+export async function apiVerifyMomoPayment(paymentReference: string) {
+  const res = await fetch(`/api/subscription/momo/verify/${encodeURIComponent(paymentReference)}`);
+  return await res.json();
+}
+
+export async function apiGetBusinessSubscription(businessId: string) {
+  const res = await fetch(`/api/subscription/business/${encodeURIComponent(businessId)}`);
+  return await res.json();
+}
+
+export async function apiSuperAdminOverride(data: {
+  businessId: string;
+  adminEmail: string;
+  adminPassword: string;
+  reason: string;
+  daysGranted: number;
+}) {
+  const res = await fetch('/api/subscription/super-admin/override', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  return await res.json();
+}
+
+export async function apiSuperAdminSetGracePeriod(businessId: string, graceDays: number) {
+  const res = await fetch('/api/subscription/super-admin/set-grace-period', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ businessId, graceDays })
+  });
+  return await res.json();
+}
+
+export async function apiSuperAdminGetSaaSStats() {
+  const res = await fetch('/api/subscription/super-admin/all-subscriptions');
+  return await res.json();
+}
+
+export async function apiSuperAdminGetMomoConfig() {
+  const res = await fetch('/api/subscription/super-admin/momo-config');
+  return await res.json();
+}
+
+export async function apiSuperAdminSaveMomoConfig(config: any) {
+  const res = await fetch('/api/subscription/super-admin/momo-config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config)
+  });
+  return await res.json();
 }
